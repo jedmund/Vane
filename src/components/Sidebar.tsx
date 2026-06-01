@@ -5,25 +5,80 @@ import {
   BookOpenText,
   Home,
   Search,
-  SquarePen,
-  Settings,
   Plus,
-  ArrowLeft,
+  LogOut,
 } from 'lucide-react';
 import Link from 'next/link';
 import { useSelectedLayoutSegments } from 'next/navigation';
 import React, { useState, type ReactNode } from 'react';
 import Layout from './Layout';
-import {
-  Description,
-  Dialog,
-  DialogPanel,
-  DialogTitle,
-} from '@headlessui/react';
 import SettingsButton from './Settings/SettingsButton';
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser';
 
 const VerticalIconContainer = ({ children }: { children: ReactNode }) => {
   return <div className="flex flex-col items-center w-full">{children}</div>;
+};
+
+// Initials fallback: prefer name, then email local-part, then a static dot.
+// The desktop sidebar is 72px wide so we deliberately render a single glyph;
+// the full email lives in the title attribute for hover discovery.
+function initialFor(email: string | null, name: string | null): string {
+  const source = (name ?? email ?? '').trim();
+  if (!source) return '?';
+  return source[0]!.toUpperCase();
+}
+
+const CurrentUserBadge = () => {
+  const { user, loading } = useCurrentUser();
+  const [submitting, setSubmitting] = useState(false);
+
+  async function handleLogout() {
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      const res = await fetch('/api/auth/logout', {
+        method: 'POST',
+        credentials: 'same-origin',
+        redirect: 'manual',
+      });
+      // /api/auth/logout returns a 302 to /login. fetch() with redirect:
+      // 'manual' surfaces this as an opaqueredirect response we cannot read
+      // headers from, so we route the browser ourselves.
+      void res;
+      window.location.href = '/login';
+    } catch {
+      // Even if the network call fails the user still wants to escape this
+      // session; the server-side cookie will time out eventually. Send them
+      // to /login so they can re-authenticate.
+      window.location.href = '/login';
+    }
+  }
+
+  if (loading || !user) return null;
+
+  const label = user.email ?? user.name ?? 'Signed in';
+
+  return (
+    <div className="flex flex-col items-center gap-y-2">
+      <div
+        className="flex items-center justify-center w-9 h-9 rounded-full bg-light-200 dark:bg-dark-200 text-black/70 dark:text-white/70 text-sm font-medium"
+        title={label}
+        aria-label={label}
+      >
+        {initialFor(user.email, user.name)}
+      </div>
+      <button
+        type="button"
+        onClick={handleLogout}
+        disabled={submitting}
+        title="Sign out"
+        aria-label="Sign out"
+        className="p-2.5 rounded-full bg-light-200 text-black/70 dark:bg-dark-200 dark:text-white/70 hover:opacity-70 hover:scale-105 transition duration-200 cursor-pointer active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <LogOut size={19} />
+      </button>
+    </div>
+  );
 };
 
 const Sidebar = ({ children }: { children: React.ReactNode }) => {
@@ -101,7 +156,10 @@ const Sidebar = ({ children }: { children: React.ReactNode }) => {
             ))}
           </VerticalIconContainer>
 
-          <SettingsButton />
+          <div className="flex flex-col items-center gap-y-3">
+            <SettingsButton />
+            <CurrentUserBadge />
+          </div>
         </div>
       </div>
 
