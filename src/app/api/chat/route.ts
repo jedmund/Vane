@@ -9,6 +9,14 @@ import db from '@/lib/db';
 import { eq } from 'drizzle-orm';
 import { chats } from '@/lib/db/schema';
 import UploadManager from '@/lib/uploads/manager';
+import {
+  getCurrentUserId,
+  getUserChat,
+  MissingUserIdHeaderError,
+  missingUserIdResponse,
+  OwnershipError,
+  ownershipErrorResponse,
+} from '@/lib/db/scoped';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -68,22 +76,27 @@ const safeValidateBody = (data: unknown) => {
   };
 };
 
+// Inserts the chat row on first send, stamping the session's userId. Locked
+// decision: userId is always server-derived (from the proxy header) and
+// never read from the request body. If the chat already exists, ownership
+// has already been verified upstream in POST before this is called.
 const ensureChatExists = async (input: {
   id: string;
+  userId: string;
   sources: SearchSources[];
   query: string;
   fileIds: string[];
 }) => {
   try {
-    const exists = await db.query.chats
-      .findFirst({
-        where: eq(chats.id, input.id),
-      })
-      .execute();
+    // Caller has already confirmed either ownership or non-existence; we
+    // re-check existence here only because the insert is a no-op on the
+    // second message of the same chat.
+    const exists = await getUserChat(input.userId, input.id);
 
     if (!exists) {
       await db.insert(chats).values({
         id: input.id,
+        userId: input.userId,
         createdAt: new Date().toISOString(),
         sources: input.sources,
         title: input.query,
@@ -102,6 +115,8 @@ const ensureChatExists = async (input: {
 
 export const POST = async (req: Request) => {
   try {
+    const userId = getCurrentUserId(req);
+
     const reqBody = (await req.json()) as Body;
 
     const parseBody = safeValidateBody(reqBody);
@@ -123,6 +138,22 @@ export const POST = async (req: Request) => {
         },
         { status: 400 },
       );
+    }
+
+    // Ownership check happens BEFORE we touch the model registry or kick off
+    // the agent. If the chat exists and the caller does not own it, we 403
+    // immediately. If it does not exist yet, the caller is starting a new
+    // chat and we will stamp userId on insert further down. We do not allow
+    // a caller to "create" a chat at an existing id owned by someone else.
+    const existingChat = await db.query.chats.findFirst({
+      where: eq(chats.id, message.chatId),
+    });
+    if (existingChat && existingChat.userId !== userId) {
+      // Legacy chats (userId === null) deliberately fall through to the
+      // forbidden branch: in the multi-user world a real user takes over a
+      // legacy id only by going through an admin reclaim flow, which is out
+      // of scope for this phase. Honest 403 keeps the invariant clean.
+      return ownershipErrorResponse();
     }
 
     const registry = new ModelRegistry();
@@ -227,6 +258,7 @@ export const POST = async (req: Request) => {
 
     ensureChatExists({
       id: body.message.chatId,
+      userId,
       sources: body.sources as SearchSources[],
       fileIds: body.files,
       query: body.message.content,
@@ -245,6 +277,12 @@ export const POST = async (req: Request) => {
       },
     });
   } catch (err) {
+    if (err instanceof MissingUserIdHeaderError) {
+      return missingUserIdResponse();
+    }
+    if (err instanceof OwnershipError) {
+      return ownershipErrorResponse();
+    }
     console.error('An error occurred while processing chat request:', err);
     return Response.json(
       { message: 'An error occurred while processing chat request' },
