@@ -248,3 +248,34 @@ round-trip to validate:
 - `tryBuildEndSessionUrl` actually calling out to PocketID's end_session_endpoint
 - The cookie chain on successful callback (state cookie cleared,
   session cookie set with the real token)
+
+### Mid-review fix: legacy chat claim on first OIDC login
+
+Surfaced by review of the stacked PR #3: Phase 1's migration backfilled
+every pre-existing chat to `userId='legacy'`, and Phase 3's scoping then
+filters by the session's user id. Real OIDC users get fresh ULID ids,
+so the `legacy` rows become invisible to them. Upgrading an existing
+Vane deploy would silently eat the entire chat history at the moment
+the API lockdown went live.
+
+Fix lives in `upsertUserFromOIDC` on the "user newly inserted" branch:
+if no other user with `sub IS NOT NULL` exists yet, this caller is the
+first real OIDC user and inherits every chat where `userId='legacy'`.
+
+Considered alternatives and why they were rejected:
+- `WHERE userId = ? OR userId = 'legacy'` everywhere in the scoped
+  queries: every authenticated user would see every legacy chat.
+  Breaks multi-user.
+- Admin route to manually reassign legacy chats: real solution
+  long-term, but blocks the upgrade path right now.
+- Email-based claim: the migration set legacy user's email to NULL,
+  no anchor to match against.
+- Opt-in `CLAIM_LEGACY_CHATS=true` env var: extra deploy step, the
+  default would still lose data on upgrade.
+
+The "first user wins" rule is the right default for the homelab
+single-user case (the only user wins automatically) AND for typical
+multi-user deploys where the admin is virtually always first to log
+in. The legacy user row itself is left in place after the claim so
+the schema FK target stays valid for any rows that might still
+reference it in some edge case.
