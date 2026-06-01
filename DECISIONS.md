@@ -451,3 +451,131 @@ and only ever sees 401 if the session expires mid-session. Returning
 re-runs the proxy's redirect. Triggering a navigation from inside the
 hook would race the proxy.
 
+---
+
+## Phase 4 — security headers + SearXNG secret (impl agent)
+
+Date: 2026-06-01
+
+### CSP is enforced from day one, not report-only
+
+Locked by orchestrator. The cost of finding a missed directive late
+is small (sites fail loud in dev), and report-only mode would have
+required a `/api/csp-report` endpoint that we are explicitly told not
+to build. Dev-mode verification on `/login` and the home redirect
+showed no violations; the rest of the surface uses the same component
+stack so it should pass too. If a real violation surfaces, the fix is
+to widen the relevant directive, not flip to report-only.
+
+### `'unsafe-inline'` accepted on both script-src and style-src
+
+Two reasons, called out in code comments next.config.mjs:39 and :43.
+1. Next.js 16 App Router still emits an inline hydration script and
+   does not yet expose a server-rendered nonce hook. NextAuth-era
+   tricks (manual nonce injection via middleware) don't apply to App
+   Router's streamed RSC payload.
+2. Headless UI, Floating UI, and Framer Motion inject inline styles
+   for positioning and transitions. Replacing them is out of scope.
+
+A nonce-based CSP is the future state and is left as a TODO in the
+script-src comment. Not blocking Phase 4.
+
+### `img-src` is permissive (`https:`) by design
+
+Chat responses pull favicons and OG images from arbitrary search-result
+domains. A specific allowlist would either break the product or require
+runtime updates as users add providers. Tighter scoping is deferred and
+documented as out-of-scope in the orchestrator prompt.
+
+### CSP is built at config-load (effectively build-time)
+
+Next bakes the value of `headers()` into `.next/routes-manifest.json`
+at `next build`. That means `OIDC_ISSUER_URL` must be present during
+the Docker image build for the IdP origin to land in `connect-src`
+and `form-action`. If it is unset at build, the CSP is still valid
+(omits the IdP origin) and a console warning prints. Implication for
+the homelab deploy: the build pipeline either needs to pass
+`OIDC_ISSUER_URL=https://id.atelier.house` as a build arg, or the IdP
+host has to be added to the CSP via an alternative mechanism (e.g.
+emit it from `proxy.ts` at request time, which would require
+relocating the directive there). For now we accept the build-time
+constraint; this is flagged for the orchestrator to surface in the PR
+description so the deploy side knows.
+
+The OIDC origin is resolved via `new URL(raw).origin` (not a manual
+string split) so malformed URLs are caught at config load rather than
+leaking a broken `connect-src` to clients.
+
+### HSTS included, no `preload` directive
+
+Two-year max-age plus `includeSubDomains` matches what most modern
+deploys recommend. We deliberately do NOT emit `preload`: enrolling
+in the HSTS preload list is effectively one-way (removal takes
+months and a manual request to browser vendors) and should be a
+conscious per-deploy decision, not a default the framework forces.
+
+### No `/api/csp-report` endpoint
+
+Locked by orchestrator. Adding one would defeat the point of running
+CSP in enforce mode and would also pull in a violation-report parser
+that we'd need to maintain.
+
+### X-Frame-Options included alongside frame-ancestors
+
+`frame-ancestors 'none'` is the modern equivalent and is what
+compliant browsers enforce. `X-Frame-Options: DENY` is redundant for
+those, but cheap, and covers older user agents that don't honor
+frame-ancestors. No downside.
+
+### SearXNG settings.yml is shipped in the image with a placeholder
+
+The Dockerfile already copies `searxng/settings.yml` to
+`/etc/searxng/settings.yml` during image build. Rather than generating
+the whole settings file at runtime, we ship the template with a
+`__SEARXNG_SECRET__` placeholder and let entrypoint.sh `sed` the real
+value in at container start. Keeps the template under version control
+and minimizes runtime file generation.
+
+### Secret precedence: env > persisted file > generate
+
+Generation only happens if both the env var is unset AND no persisted
+file exists. The persisted file lives at `/home/vane/data/searxng.secret`
+inside the data volume so the secret survives container rebuilds
+without operator intervention. This is the smooth-upstream experience
+called for in the orchestrator prompt: a user can `docker compose up`
+and never see SearXNG complain about a missing secret.
+
+### Persisted secret is 0600
+
+Generated via `( umask 077 && printf ... )` so the file lands at
+`0600` even on filesystems where post-hoc `chmod` is ignored (some
+NFS / bind-mount setups). Followed by an idempotent `chmod 600` for
+belt-and-braces. The secret is operator-only readable; SearXNG runs
+as root via sudo and can read it.
+
+### `sed` delimiter is `|` not `/`
+
+The substituted value is a 64-char hex string with no `|` in it.
+Using `|` as the delimiter avoids any chance of the substitution
+choking on a `/` if the secret format ever changes (or if an operator
+override contains a `/`).
+
+### Did NOT take from rafaelfiguereod-stack PR
+
+Per orchestrator: `/api/auth/login` password handler, `/auth/login`
+password page, `/config` and `/config/setup-complete` first-run
+routes (our existing /api/config routes predate that PR; left alone),
+`VANE_AUTH_TOKEN` env var, `middleware.ts` (we use `proxy.ts` in
+Next 16), the upload manager (separate PR), the scraper utility
+(separate PR), and the `src/lib/config/*` index module tied to the
+first-run flow. We also did not take the `SECURITY-AUDIT.md` or
+`.agent-task.md` artifacts.
+
+### Form of CSP value: single header line, joined with `; `
+
+Multi-line CSP via header arrays is not how the HTTP spec works; the
+final header is one line. We assemble directives as an array for
+readability then `join('; ')`. The trailing-`;` debate (some examples
+add one, the spec doesn't require it) is resolved by omitting it —
+matches the W3C example output and avoids a dangling-semicolon parse
+quirk in older browsers.
