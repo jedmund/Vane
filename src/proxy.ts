@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parse as parseCookies } from 'cookie';
-import { SESSION_COOKIE } from '@/lib/auth/cookies';
-import { getSessionStore } from '@/lib/auth/session-store';
+import { SESSION_COOKIE, buildSessionCookieHeader } from '@/lib/auth/cookies';
+import { getSessionStore, getSessionTtlSeconds } from '@/lib/auth/session-store';
 
 // Next.js 16 renamed `middleware.ts` to `proxy.ts` and made the new file
 // default to the Node.js runtime. That matters here: the session store is
@@ -69,9 +69,19 @@ export async function proxy(req: NextRequest) {
   // outside because Next strips client-supplied headers it overrides here).
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set('x-vane-user-id', userId);
-  return NextResponse.next({
+  const response = NextResponse.next({
     request: { headers: requestHeaders },
   });
+  // touch() above slid the server-side expiry; re-emit the session cookie
+  // so the browser's Max-Age tracks the server. Without this, a session
+  // with a short TTL (e.g. SESSION_TTL_SECONDS=900) would expire
+  // client-side even while the user is active, dropping them at /login
+  // mid-session.
+  response.headers.set(
+    'Set-Cookie',
+    buildSessionCookieHeader(token!, getSessionTtlSeconds()),
+  );
+  return response;
 }
 
 export const config = {
