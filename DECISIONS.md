@@ -279,3 +279,175 @@ multi-user deploys where the admin is virtually always first to log
 in. The legacy user row itself is left in place after the claim so
 the schema FK target stays valid for any rows that might still
 reference it in some edge case.
+
+---
+
+## Phase 3: per-user data scoping (impl agent)
+
+Date: 2026-06-01
+
+### OwnershipError lives in src/lib/db/scoped.ts, not its own file
+
+The error class is a single sentinel value used only by helpers in the same
+module and the routes that call them. Splitting it into `src/lib/db/errors.ts`
+would create a one-line file and force every route to import from two places
+to handle ownership failures. Kept it adjacent to the helper that throws it.
+The same file also exports `MissingUserIdHeaderError` and the canned
+`ownershipErrorResponse` / `missingUserIdResponse` builders so a route only
+has to import from one place.
+
+### Audit was a grep, not a type-system change
+
+Considered making the scoped helpers the only way to access `chats` from
+route code by exporting a `userScopedDb(userId)` proxy that wraps the
+drizzle query builder. Rejected: drizzle's chainable types are large and
+non-trivial to wrap; the leverage would be small (we only touch three API
+routes today); and the grep audit is already short and conclusive. The
+audit shape is committed to muscle memory:
+
+```
+rg "from\(chats\)" src/app/api
+rg "from\(messages\)" src/app/api
+rg "db\.query\.(chats|messages)" src/app/api
+rg "db\.(insert|update|delete)\((chats|messages)\)" src/app/api
+```
+
+Every hit must either be inside `scoped.ts` (the helpers themselves), or
+preceded by a `userId` filter / `getUserChat` / `assertUserOwnsChat`.
+
+### /api/chats GET: switched .reverse() to ORDER BY desc(createdAt)
+
+The original implementation did `findMany()` (no order) then `.reverse()`
+in JS. That assumed SQLite insertion order matched the desired display
+order, which is true today but is not a guarantee. While I was already
+rewriting the query to add the userId filter I switched to `ORDER BY
+createdAt DESC`. Same display order, explicit contract.
+
+### Existing chat collision in /api/chat: 403 not silent take-over
+
+When POST /api/chat arrives with a `chatId` that already exists in the
+database but is owned by someone else (or is a legacy NULL-userId row),
+we return 403. The alternative would be to silently insert a NEW chat
+with the same id but a different `userId` (impossible: id is the PK), or
+to accept the message into the existing chat (an obvious data leak), or
+to auto-allocate a fresh id (breaks the client's optimistic UI which has
+already routed to `/c/<chatId>`). 403 is the only honest answer; the
+client should handle it by surfacing an error.
+
+Legacy chats (userId === null) fall into the same 403 bucket. A real
+user does not "claim" a legacy chat in this phase; admin reclaim tooling
+is out of scope per the plan.
+
+### Ownership check in /api/chat happens BEFORE model loading
+
+The check runs before `ModelRegistry`, before the `SearchAgent`, before
+the response stream is opened. A cross-user POST with a bogus chatId
+returns 403 without touching the model layer, so it cannot be used to
+probe model availability or exhaust LLM quotas.
+
+### SearchAgent's messages access was NOT modified
+
+`src/lib/agents/search/index.ts` reads and writes `messages` rows but
+the agent is reachable only via `/api/chat` POST. That route now
+ownership-checks the chatId before spawning the agent, so by the time
+the agent runs the chatId is known-good. Adding a second ownership
+check inside the agent would be redundant and would require threading
+`userId` through the search agent's input shape for a non-functional
+gain.
+
+### Messages route: 403 leaks nothing the chat list does not already leak
+
+`/api/chats/[id]` returns 403 for both "chat does not exist" and "chat
+exists but belongs to someone else". An attacker who already enumerated
+`/api/chats` can see exactly their own chat ids; nothing they probe
+externally distinguishes "not yours" from "not real". Matches the locked
+policy.
+
+### useCurrentUser: useState + module-level Promise cache, no context
+
+Considered wrapping the hook in a React context so the cache invalidates
+on logout. Rejected because logout always navigates to `/login` via
+`window.location.href = '/login'`, which is a hard navigation that
+re-imports the module and resets the cache as a side effect. No context
+needed.
+
+The hook returns `{user, loading, error}` rather than just `user` so a
+future consumer can render skeletons. The Sidebar currently renders
+`null` during `loading` to avoid a layout shift.
+
+### Logout uses `fetch('/api/auth/logout', { redirect: 'manual' })` + manual nav
+
+The logout endpoint returns 302 to `/login`. Browsers will not follow a
+redirect from a fetch POST to a top-level navigation. We pass
+`redirect: 'manual'` to suppress the fetch-level redirect handling, then
+do `window.location.href = '/login'` ourselves. The server-side cookie
+clear runs as the fetch completes; the navigation guarantees the user
+ends up on the login page even if the redirect status was unreadable.
+
+### Sidebar treatment: avatar circle + small logout button, no email text
+
+The desktop sidebar is 72px wide. A full email does not fit and forcing
+it would require either a wider sidebar (out of scope visual change) or
+heavy truncation (`jed...@atelier.house` style) that loses the
+information the email was supposed to convey. Settled on a 36px circle
+with the user's first initial, tooltipped (`title` + `aria-label`) with
+the full email. The logout button matches the existing circular icon
+button used by `SettingsButton`. Both sit in a new flex column under
+Settings so the visual ordering bottom-up is: logout, user, settings,
+nav links. That reads bottom-of-screen to top-of-screen.
+
+Mobile bar (the `lg:hidden` strip) is untouched. The mobile UX is
+secondary on this app and crowding the bottom strip with a logout
+button there is an explicit non-goal for this phase. A future pass
+that adds a "more" menu to the mobile bar is the natural home.
+
+### removed unused Sidebar imports while editing
+
+`SquarePen`, `ArrowLeft`, `Description`, `Dialog`, `DialogPanel`,
+`DialogTitle`, and `Settings` were imported but unused in the old file.
+Pruned them along with the change rather than leave dead imports under
+my touch. Standard cleanup, not a functional decision.
+
+### Verification: manual test plan, no script committed
+
+The plan said "manual test plan documented OR a small Vitest/Node
+script under scripts/". The repo has no test runner configured
+(`package.json` has no `test` script and no vitest/jest dep) and
+`better-sqlite3` is a native module that the helper transitively
+loads. Standing up a one-off test harness for one phase would add
+infra weight that gets paid back only if the rest of the project
+adopts the same runner. Documented the manual test plan instead:
+
+1. Boot the app with two distinct OIDC users (or two distinct
+   `users` rows manually inserted, with two session cookies issued
+   by hand against the in-memory session store).
+2. As user A: POST /api/chat with a new chatId. Confirm the chat is
+   created with `userId=A`.
+3. As user A: GET /api/chats. Confirm only A's chats are returned.
+4. As user B: GET /api/chats. Confirm only B's chats are returned (no
+   A's chat is visible).
+5. As user B: GET /api/chats/<A's chatId>. Confirm 403
+   `{"error":"forbidden"}`.
+6. As user B: DELETE /api/chats/<A's chatId>. Confirm 403; confirm
+   the chat is still present in the DB.
+7. As user B: POST /api/chat with `chatId = A's chatId`. Confirm 403
+   without the model registry being touched.
+8. As user A: DELETE /api/chats/<A's chatId>. Confirm 200 and both the
+   chat row and its messages are gone.
+9. Remove the session cookie. GET /api/me. Confirm 401.
+10. Hit a route directly without going through proxy (synthetic
+    request without `x-vane-user-id`). Confirm 500
+    `{"error":"server_misconfigured"}`. This case is unreachable in
+    production but confirms the helper's contract.
+
+### useCurrentUser handling of 401
+
+Locked decision in the prompt: "useCurrentUser handles 401 by
+redirecting or just returning null". Chose `null`. The proxy already
+redirects unauthenticated *navigations* to `/login`; the hook fires on
+an authenticated page (only authenticated pages render the Sidebar)
+and only ever sees 401 if the session expires mid-session. Returning
+`null` lets the Sidebar hide the badge until the next page navigation
+re-runs the proxy's redirect. Triggering a navigation from inside the
+hook would race the proxy.
+
