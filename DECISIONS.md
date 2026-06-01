@@ -101,3 +101,150 @@ We don't have a docker-compose test rig. Verified by:
 4. Inspecting the resulting schema with `sqlite3 .schema` and the
    `users` and `ran_migrations` tables with `SELECT *`.
 5. Restoring the backup.
+
+---
+
+## Phase 2: OIDC server plumbing (impl agent)
+
+Date: 2026-06-01
+
+### File convention: `src/proxy.ts`, not `src/middleware.ts`
+
+The orchestrator prompt locked in `src/middleware.ts`. Next.js 16.2 deprecated
+that filename and renamed the convention to `proxy.ts`. The critical
+behavioral difference is the runtime default: `middleware.ts` still defaults
+to the Edge runtime, while `proxy.ts` defaults to Node.js. Edge runtime
+crashes on `crypto`, `setInterval`, and `better-sqlite3`, all of which the
+session store + cookie HMAC + user lookup transitively require. Naming the
+file `middleware.ts` would have meant either inlining a parallel Edge-safe
+session lookup (a second source of truth that would drift) or failing at
+runtime the first time the file ran. Renamed to `proxy.ts`, exported
+`proxy` instead of `middleware`. Behavior is identical from the orchestrator's
+perspective; the locked allowlist is preserved verbatim.
+
+### Session store: singleton lives in module scope, not on `globalThis`
+
+The store is created once per Node process and held in a module-level `let`.
+Next.js dev mode does hot-reload module identities, which would create
+multiple Map instances in the same process and orphan sessions. We accept
+the dev-mode flake because the production build (which is what matters for
+the deploy) builds once and runs forever. If dev-mode flake becomes
+annoying, attach to `globalThis.__vaneSessionStore`. Not doing it now to
+avoid the `globalThis as any` typing dance for a problem nobody has yet.
+
+### State cookie: HMAC-SHA256 over a base64url-encoded JSON payload
+
+The state cookie carries `{state, nonce, codeVerifier, returnTo}`. The
+format is `<base64url(json)>.<base64url(hmac)>`. We sign rather than
+encrypt because the contents are not secret (PKCE verifier exposure does
+not break PKCE; the threat model is integrity, not confidentiality).
+`timingSafeEqual` on the signature prevents an HMAC timing oracle, which
+admittedly is a near-theoretical concern at typical request rates but the
+code is one line. The minimum `SESSION_SECRET` length is enforced (16
+chars) so a misconfigured deploy with `SESSION_SECRET=x` fails at boot
+rather than silently shipping a forgeable cookie.
+
+### Session token format: 32 bytes from `crypto.randomBytes`, base64url
+
+Opaque token, never decoded by anything other than the Map. base64url
+chosen over hex because it is shorter (43 vs 64 chars) and cookie-safe with
+no escaping. The token never appears in URLs.
+
+### Same-origin `returnTo` validation: prefix check, not URL parsing
+
+`sanitizeReturnTo` rejects anything starting with `//`, `http://`,
+`https://`, or anything that doesn't start with `/`. Considered using
+`new URL(raw, origin)` and comparing hosts, but the prefix check is
+simpler, has no edge cases with `URL` constructor's coercion behavior, and
+is the canonical pattern for this. Anything that fails sanitization
+silently rewrites to `/` rather than 400-ing the request, because the
+sanitization runs on user-supplied query params and we'd rather absorb a
+malformed value than break the login flow.
+
+### Userinfo failure: fall back to id_token claims, then to email local-part
+
+If `fetchUserInfo` throws (network blip, IdP misconfiguration), the callback
+reads `email` and `name` from the id_token claims that were already
+validated during code exchange. If `name` is still missing, derive a
+display name from the email local-part. The user row's `name` column is
+nullable in the schema but the callback never inserts null for it in
+practice; the callback `?? null` paths are there for type honesty, not
+because we expect to hit them with PocketID.
+
+### `/api/me` response omits `sub`
+
+Locked by the prompt: `{id, email, name}`. The internal `id` (ULID) is the
+stable handle for the rest of the app; `sub` only exists as the lookup key
+into the users table. Exposing both would invite the frontend to start
+keying off `sub`, which couples the UI to the OIDC provider's identifier.
+
+### Logout: 302 to `/login`, NOT to PocketID's end-session URL
+
+Locked by the prompt. The end-session endpoint is fetched server-side as
+a fire-and-forget POST so PocketID can clear its server-side session record
+where it implements that; the user's browser is then redirected to our own
+`/login` page. The user can re-authenticate against PocketID from there if
+they want, but they don't have to round-trip through PocketID's logout
+confirmation UI. Tradeoff: PocketID's browser-side session cookie remains
+set. If the user clicks "Sign in with PocketID" they will be silently
+re-authenticated without a password prompt. That's the expected SSO
+behavior and matches OpenWebUI's PocketID integration.
+
+### Middleware passes `x-vane-user-id` header to downstream handlers
+
+The proxy mutates the request headers via `NextResponse.next({ request:
+{ headers } })` so route handlers can read `req.headers.get('x-vane-user-id')`
+without re-validating the session cookie. Next.js prevents client-supplied
+versions of headers it overrides this way from reaching the handler, so
+the trust boundary is real. Phase 3 will consume this header for per-user
+chat scoping.
+
+### Session expiry mid-stream: 401 immediately, no refresh
+
+Locked by the prompt. `getSessionStore().get(token)` returns null for an
+expired token and deletes the entry. The middleware then 401s API calls
+and 302s HTML routes to `/login`. No silent refresh, no grace window. A
+running chat request that crosses the expiry boundary will 401 mid-stream
+on its next API call. The user re-authenticates and resumes.
+
+### `node:` prefix on imports: removed
+
+Originally wrote `import { randomBytes } from 'node:crypto'`. Webpack 5
+(invoked by `yarn build`) refuses to resolve the `node:` URI scheme inside
+files transitively reachable from `proxy.ts`. Dropped the prefix; the
+import is equivalent at the module level. This is a webpack limitation,
+not a Node limitation.
+
+### Manifest in the allowlist
+
+`/manifest.webmanifest` is generated by the Next metadata API and is
+expected to be fetchable without auth (PWA spec, plus browsers don't send
+cookies on the manifest fetch in some configurations). Added to the
+proxy allowlist alongside `/favicon.ico`. Static assets under `/_next/`
+are also allowlisted by prefix.
+
+### What is necessarily untested
+
+The actual OIDC round-trip (discovery, authorization code exchange,
+userinfo) cannot be exercised without a real PocketID instance. The smoke
+test verified:
+- `/` without a cookie redirects to `/login?returnTo=%2F`
+- `/api/me` without a cookie returns 401 `{error: "unauthenticated"}`
+- `/login` renders 200 OK
+- `/api/auth/login` without `OIDC_ISSUER_URL` returns 503 `{error: "oidc_unavailable"}`
+- `/api/auth/login` with an invalid issuer URL returns 503 (discovery
+  fails before the redirect is built)
+- `/api/auth/callback` without a state cookie returns 400 `{error: "invalid_state"}`
+- `/api/auth/logout` (POST) returns 302 to `/login` and emits a
+  `Set-Cookie: vane_session=; Max-Age=0` header
+- `/favicon.ico` and `/manifest.webmanifest` bypass auth
+- `yarn build` is clean with no warnings
+
+The lines that are NOT exercised end-to-end and need a real PocketID
+round-trip to validate:
+- `buildAuthorizationStart` URL construction with real provider metadata
+- `authorizationCodeGrant` validation of state / nonce / PKCE
+- `fetchUserInfo` happy path (and the id_token fallback path)
+- `tryBuildEndSessionUrl` actually calling out to PocketID's end_session_endpoint
+- The cookie chain on successful callback (state cookie cleared,
+  session cookie set with the real token)
