@@ -1,7 +1,9 @@
-import { eq } from 'drizzle-orm';
+import { and, eq, isNotNull, ne } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import db from '@/lib/db';
-import { users } from '@/lib/db/schema';
+import { chats, users } from '@/lib/db/schema';
+
+const LEGACY_USER_ID = 'legacy';
 
 export interface AppUser {
   id: string;
@@ -58,7 +60,39 @@ export async function upsertUserFromOIDC(
     name,
     createdAt,
   });
+
+  await claimLegacyChatsIfFirstUser(id);
+
   return { id, sub, email, name, createdAt };
+}
+
+// On upgrade from a pre-OIDC deploy, every existing chat was backfilled
+// to the synthetic 'legacy' user by migration 0003. Once scoping lands,
+// those chats become invisible because real users have fresh ULID ids.
+// The first real OIDC user to log in inherits the legacy chats; later
+// users start clean. For single-user deploys this restores history
+// transparently. For multi-user deploys the admin is virtually always
+// the first to log in, which is the expected ownership transfer.
+async function claimLegacyChatsIfFirstUser(newUserId: string): Promise<void> {
+  const otherRealUsers = await db
+    .select({ id: users.id })
+    .from(users)
+    .where(and(isNotNull(users.sub), ne(users.id, newUserId)))
+    .limit(1);
+
+  if (otherRealUsers.length > 0) return;
+
+  const result = await db
+    .update(chats)
+    .set({ userId: newUserId })
+    .where(eq(chats.userId, LEGACY_USER_ID));
+
+  const claimed = (result as { changes?: number }).changes ?? 0;
+  if (claimed > 0) {
+    console.log(
+      `[auth] First OIDC user ${newUserId} claimed ${claimed} legacy chat(s).`,
+    );
+  }
 }
 
 export async function getUserById(id: string): Promise<AppUser | null> {
