@@ -1172,6 +1172,13 @@
   dependencies:
     "@types/node" "*"
 
+"@types/cookie@^1.0.0":
+  version "1.0.0"
+  resolved "https://registry.yarnpkg.com/@types/cookie/-/cookie-1.0.0.tgz#c1bd6d1fed5e8086e5ab700c1e3174c7a12d065b"
+  integrity sha512-mGFXbkDQJ6kAXByHS7QAggRXgols0mAdP4MuXgloGY1tXokvzaFFM4SMqWvf7AH0oafI7zlFJwoGWzmhDqTZ9w==
+  dependencies:
+    cookie "*"
+
 "@types/hast@^3.0.0":
   version "3.0.4"
   resolved "https://registry.yarnpkg.com/@types/hast/-/hast-3.0.4.tgz#1d6b39993b82cea6ad783945b0508c25903e15aa"
@@ -2060,6 +2067,11 @@ convert-source-map@^2.0.0:
   version "2.0.0"
   resolved "https://registry.yarnpkg.com/convert-source-map/-/convert-source-map-2.0.0.tgz#4b560f649fc4e918dd0ab75cf4961e8bc882d82a"
   integrity sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==
+
+cookie@*, cookie@^1.1.1:
+  version "1.1.1"
+  resolved "https://registry.yarnpkg.com/cookie/-/cookie-1.1.1.tgz#3bb9bdfc82369db9c2f69c93c9c3ceb310c88b3c"
+  integrity sha512-ei8Aos7ja0weRpFzJnEA9UHJ/7XQmqglbRwnf2ATjcB9Wq874VKH9kfjjirM6UhU2/E5fFYadylyhFldcqSidQ==
 
 core-js@^3.6.0, core-js@^3.8.3:
   version "3.49.0"
@@ -3840,6 +3852,11 @@ jiti@^1.21.7:
   resolved "https://registry.yarnpkg.com/jiti/-/jiti-1.21.7.tgz#9dd81043424a3d28458b193d965f0d18a2300ba9"
   integrity sha512-/imKNG4EbWNrVjoNC/1H5/9GFy+tqjGBHCaSsN+P2RnPqjsLmv6UD3Ej+Kj8nBWaRAwyk7kK5ZUc+OEatnTR3A==
 
+jose@^6.2.2:
+  version "6.2.3"
+  resolved "https://registry.yarnpkg.com/jose/-/jose-6.2.3.tgz#0975197ad973251221c658a3cddc4b951a250c2d"
+  integrity sha512-YYVDInQKFJfR/xa3ojUTl8c2KoTwiL1R5Wg9YCydwH0x0B9grbzlg5HC7mMjCtUJjbQ/YnGEZIhI5tCgfTb4Hw==
+
 js-tiktoken@^1.0.21:
   version "1.0.21"
   resolved "https://registry.yarnpkg.com/js-tiktoken/-/js-tiktoken-1.0.21.tgz#368a9957591a30a62997dd0c4cf30866f00f8221"
@@ -4407,6 +4424,11 @@ normalize-url@^4.5.1:
   resolved "https://registry.yarnpkg.com/normalize-url/-/normalize-url-4.5.1.tgz#0dd90cf1288ee1d1313b87081c9a5932ee48518a"
   integrity sha512-9UZCFRHQdNrfTpGg8+1INIg93B6zE0aXMVFkw1WFwvO4SlZywU6aLg5Of0Ap/PgcbSw4LNxvMWXMeugwMCX0AA==
 
+oauth4webapi@^3.8.5:
+  version "3.8.6"
+  resolved "https://registry.yarnpkg.com/oauth4webapi/-/oauth4webapi-3.8.6.tgz#0ede466d8be8774db38558a90612c8b6186abba4"
+  integrity sha512-iwemM91xz8nryHti2yTmg5fhyEMVOkOXwHNqbvcATjyajb5oQxCQzrNOA6uElRHuMhQQTKUyFKV9y/CNyg25BQ==
+
 object-assign@^4.0.1, object-assign@^4.1.1:
   version "4.1.1"
   resolved "https://registry.yarnpkg.com/object-assign/-/object-assign-4.1.1.tgz#2109adc7965887cfc05cbbd442cac8bfbb360863"
@@ -4544,6 +4566,14 @@ opencollective-postinstall@^2.0.3:
   version "2.0.3"
   resolved "https://registry.yarnpkg.com/opencollective-postinstall/-/opencollective-postinstall-2.0.3.tgz#7a0fff978f6dbfa4d006238fbac98ed4198c3259"
   integrity sha512-8AV/sCtuzUeTo8gQK5qDZzARrulB3egtLzFgteqB2tcT4Mw7B8Kt7JcDHmltjz6FOAHsvTevk70gZEbhM4ZS9Q==
+
+openid-client@^6.8.4:
+  version "6.8.4"
+  resolved "https://registry.yarnpkg.com/openid-client/-/openid-client-6.8.4.tgz#573e852a9c6ea3fcfe180956da6aaf979c4e4724"
+  integrity sha512-QSw0BA08piujetEwfZsHoTrDpMEha7GDZDicQqVwX4u0ChCjefvjDB++TZ8BTg76UpwhzIQgdvvfgfl3HpCSAw==
+  dependencies:
+    jose "^6.2.2"
+    oauth4webapi "^3.8.5"
 
 option@~0.2.1:
   version "0.2.4"
@@ -5923,6 +5953,11 @@ uint8array-extras@^1.4.0:
   version "1.5.0"
   resolved "https://registry.yarnpkg.com/uint8array-extras/-/uint8array-extras-1.5.0.tgz#10d2a85213de3ada304fea1c454f635c73839e86"
   integrity sha512-rvKSBiC5zqCCiDZ9kAOszZcDvdAHwwIKJG33Ykj43OKcWsnmcBRL09YTU4nOeHZ8Y2a7l1MgTd08SBe9A8Qj6A==
+
+ulid@^3.0.2:
+  version "3.0.2"
+  resolved "https://registry.yarnpkg.com/ulid/-/ulid-3.0.2.tgz#b6a1f2a3de7852e39aa86bf497a8e33b1867c984"
+  integrity sha512-yu26mwteFYzBAot7KVMqFGCVpsF6g8wXfJzQUHvu1no3+rRRSFcSV2nKeYvNPLD2J4b08jYBDhHUjeH0ygIl9w==
 
 unbox-primitive@^1.1.0:
   version "1.1.0"
