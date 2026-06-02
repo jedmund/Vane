@@ -129,6 +129,7 @@ export const POST = async (req: NextRequest) => {
           id: created.id,
           name: created.name,
           type: created.type,
+          config: created.config,
           scope,
           chatModels: created.chatModels,
           embeddingModels: created.embeddingModels,
