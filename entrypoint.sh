@@ -16,9 +16,11 @@ if [ -z "${SEARXNG_SECRET}" ]; then
     SEARXNG_SECRET="$(cat "${SEARXNG_SECRET_FILE}")"
   else
     mkdir -p "$(dirname "${SEARXNG_SECRET_FILE}")"
+    # python3 instead of openssl: openssl CLI is not in the node:24-slim
+    # base image, but python3 is already installed for SearXNG itself.
     # 32 bytes -> 64 hex chars; matches what SearXNG ships as an example
     # and what the previous hardcoded value was.
-    SEARXNG_SECRET="$(openssl rand -hex 32)"
+    SEARXNG_SECRET="$(python3 -c 'import secrets; print(secrets.token_hex(32))')"
     # umask before write so the file lands at 0600 even on filesystems
     # that don't honor a post-hoc chmod (some bind mounts).
     ( umask 077 && printf '%s' "${SEARXNG_SECRET}" > "${SEARXNG_SECRET_FILE}" )
