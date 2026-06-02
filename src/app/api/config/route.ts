@@ -1,7 +1,6 @@
 import configManager from '@/lib/config';
 import ModelRegistry from '@/lib/models/registry';
 import { NextRequest, NextResponse } from 'next/server';
-import { ConfigModelProvider } from '@/lib/config/types';
 import {
   getCurrentUserId,
   MissingUserIdHeaderError,
@@ -19,21 +18,28 @@ export const GET = async (req: NextRequest) => {
     const values = configManager.getCurrentConfig();
     const fields = configManager.getUIConfigSections();
 
+    // Providers no longer live in config.json (Phase 1 moved them to SQLite).
+    // The pre-Phase 7 implementation mapped over values.modelProviders, which
+    // was always undefined or empty after that migration, so the response
+    // always shipped zero providers to the Settings dialogue. Build the list
+    // straight from the registry so the panel sees the same data the
+    // /api/providers endpoint does.
     const modelRegistry = new ModelRegistry(userId);
     const modelProviders = await modelRegistry.getActiveProviders();
 
-    values.modelProviders = (values.modelProviders ?? []).map(
-      (mp: ConfigModelProvider) => {
-        const activeProvider = modelProviders.find((p) => p.id === mp.id);
-
-        return {
-          ...mp,
-          chatModels: activeProvider?.chatModels ?? mp.chatModels,
-          embeddingModels:
-            activeProvider?.embeddingModels ?? mp.embeddingModels,
-        };
-      },
-    );
+    values.modelProviders = modelProviders.map((p) => ({
+      id: p.id,
+      name: p.name,
+      type: p.type ?? '',
+      scope: p.scope,
+      chatModels: p.chatModels,
+      embeddingModels: p.embeddingModels,
+      // config is intentionally empty: this endpoint is not authorised to
+      // leak api_key / secret material. Callers that need the raw config
+      // for an edit flow must use /api/providers/[id]/secret instead.
+      config: {},
+      hash: '',
+    }));
 
     return NextResponse.json({
       values,
