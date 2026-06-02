@@ -1004,3 +1004,109 @@ the unrelated `configManager.updateConfig` for generic config writes);
 `api_key` does not appear in src/app/api/providers/route.ts (the list
 response shape excludes it). The /api/providers/[id]/secret route is
 visible in the build output's route table.
+
+---
+
+## Phase 5: provider list scope UI + admin scope selector (impl agent)
+
+Date: 2026-06-01
+
+### isAdmin plumbing through /api/me, not a separate /api/me/admin endpoint
+
+The hook layer already had a single network call per page load
+(useCurrentUser with a module-level Promise cache). Adding a parallel
+admin endpoint would double the round trips during page bootstrap for
+zero functional gain. /api/me already loads the user row out of SQLite
+via getUserById, which now returns the isAdmin column the schema added
+in Phase 1, so the marginal cost is zero. The flag is explicitly UX-only
+and is documented as such in both the route comment and the hook type;
+every server-side mutation re-checks via requireAdmin / isUserAdmin so
+a tampered client cannot escalate.
+
+### scope field on ConfigModelProvider is optional, not required
+
+Marking it required would break the /api/config code path that builds
+the ConfigModelProvider list from the file-system config (which never
+carried scope), and would surface a noisy TypeScript error for a path
+that is being phased out anyway. Optional + a defensive default in
+the consumer (treat undefined as 'personal') is the smaller diff. The
+default of personal is safe because the list endpoint already filters
+to rows the caller can see: an undefined-scope row reaching the UI must
+have already passed the visibility predicate, and treating it as
+personal merely re-enables the edit/delete buttons the user would
+already have been entitled to use under either scope assumption.
+
+### Scope badge palette: muted zinc/gray for Instance, sky accent for Personal
+
+The Instance badge uses the existing light-200/dark-200 surface tokens
+the codebase already uses for inactive chrome (settings dividers, etc.)
+so it reads as neutral meta information rather than a call to action.
+The Personal badge reuses the sky tint already applied to the plug
+icon and primary action buttons elsewhere in the provider list, so a
+user scanning their own connections gets a subtle but consistent visual
+anchor on the rows they own. Both badges use existing tokens; no new
+Tailwind color was introduced.
+
+### Add Provider modal scope default for admin: Instance
+
+Locked decision per the prompt. The historical Add Provider flow (pre
+admin/user split) always created what is now an instance row, so
+defaulting admins back to Instance preserves the muscle memory of
+existing operators. Personal is a one-click opt-in for admins who want
+to add a key they pay for personally.
+
+### Two-button toggle, not radio or Select
+
+The choice is binary, and the codebase has no shared two-option toggle
+component. A native radio group would have required custom styling to
+match the existing dark-mode tokens; the Select component the modal
+already uses for connection-type renders as a dropdown which felt
+heavier than the choice warrants. Two side-by-side buttons make both
+options visible at a glance, match the modal's existing button styling,
+and add ~25 lines without pulling in a new dependency.
+
+### 403 error mapping happens inline in the dialog, not in a shared util
+
+Only one call site in the Phase 5 scope produces a user-facing 403
+(POST /api/providers from the Add modal). UpdateProvider and
+DeleteProvider can also 403 but their buttons are hidden for rows the
+caller cannot mutate, so the practical paths that surface 403 to a
+toast are limited to the modal. Inlining the mapping keeps the
+exception-to-message translation co-located with the only handler that
+needs it. If Phase 6 adds Personal/Instance settings panels with their
+own POST/PATCH/DELETE flows, that is the moment to extract a shared
+parseProviderErrorBody helper.
+
+### Modal stays open on 403, closes on success
+
+The original handler closed the modal in the `finally` block, which
+discarded the form state even on errors. For a non-admin who hits
+admin_required (a tampered or stale client state where the toggle was
+shown despite isAdmin being false) the original behavior would have
+lost their input and required re-typing the connection details. Moving
+setOpen(false) into the success branch only is a strict UX improvement
+with no security implication: the form remains client-side until the
+user closes or retries.
+
+### canMutate gating extends to per-model X buttons and AddModel button
+
+The header edit/delete are the obvious affordances, but the per-model
+delete X buttons and the AddModel button inside the panel both call
+/api/providers/[id]/models, which is scoped the same way (admin or own
+personal). Leaving those visible to non-admins on instance rows would
+mean the user clicks an apparently-live button and gets a generic
+toast error from the network layer. Gating all four affordances on the
+same canMutate boolean makes the panel read consistently as
+read-only or fully interactive, no half-states.
+
+### Verification
+
+`yarn build` clean. Grep audit
+`rg "scope === 'instance'|scope === 'personal'" src/`
+returns the expected hits in the providers route, the ModelProvider
+component (badge + canMutate), and the AddProvider modal (toggle
+styling branches). /api/me response now includes isAdmin and the
+useCurrentUser hook surfaces it on the CurrentUser interface. Phase 6
+(new Settings panels) and Phase 7 (welcome-screen removal) remain
+untouched.
+
