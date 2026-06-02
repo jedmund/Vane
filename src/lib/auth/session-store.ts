@@ -1,7 +1,6 @@
-import { randomBytes } from 'crypto';
+import { createHmac, timingSafeEqual } from 'crypto';
+import { getSessionSecret } from './oidc';
 
-// Default to 7 days. Tunable via SESSION_TTL_SECONDS so the homelab deploy can
-// shorten or extend it without a code change.
 const DEFAULT_TTL_SECONDS = 60 * 60 * 24 * 7;
 
 function ttlSeconds(): number {
@@ -14,81 +13,88 @@ function ttlSeconds(): number {
 
 export interface SessionRecord {
   userId: string;
-  expiresAt: number; // epoch ms
+  expiresAt: number;
 }
 
 export interface SessionStore {
   create(userId: string): Promise<{ token: string; expiresAt: number }>;
   get(token: string): Promise<SessionRecord | null>;
   delete(token: string): Promise<void>;
-  // Slides the expiry forward by the full TTL. No-op if the token is missing
-  // or already expired.
-  touch(token: string): Promise<SessionRecord | null>;
+  touch(token: string): Promise<({ token: string } & SessionRecord) | null>;
 }
 
-class InMemorySessionStore implements SessionStore {
-  private readonly store = new Map<string, SessionRecord>();
-  private sweepHandle: ReturnType<typeof setInterval> | null = null;
+interface TokenPayload {
+  userId: string;
+  iat: number;
+}
 
-  constructor() {
-    // 60s sweep. Using setInterval (not setTimeout chaining) so a single timer
-    // is enough; .unref() so it does not keep the process alive on its own.
-    this.sweepHandle = setInterval(() => this.sweep(), 60_000);
-    if (typeof this.sweepHandle.unref === 'function') {
-      this.sweepHandle.unref();
-    }
+function sign(payload: TokenPayload): string {
+  const body = Buffer.from(JSON.stringify(payload), 'utf8').toString('base64url');
+  const sig = createHmac('sha256', getSessionSecret())
+    .update(body)
+    .digest('base64url');
+  return `${body}.${sig}`;
+}
+
+function verifyExpiresAt(iat: number): number | null {
+  const expiresAt = iat + ttlSeconds() * 1000;
+  if (expiresAt <= Date.now()) return null;
+  return expiresAt;
+}
+
+function verifyToken(token: string): TokenPayload | null {
+  const dot = token.lastIndexOf('.');
+  if (dot <= 0) return null;
+  const body = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  const expected = createHmac('sha256', getSessionSecret())
+    .update(body)
+    .digest('base64url');
+  try {
+    const a = Buffer.from(sig, 'base64url');
+    const b = Buffer.from(expected, 'base64url');
+    if (a.length !== b.length || !timingSafeEqual(a, b)) return null;
+    const json = Buffer.from(body, 'base64url').toString('utf8');
+    const parsed = JSON.parse(json) as TokenPayload;
+    if (typeof parsed?.userId !== 'string' || typeof parsed?.iat !== 'number') return null;
+    return parsed;
+  } catch {
+    return null;
   }
+}
 
-  private sweep() {
-    const now = Date.now();
-    for (const [token, rec] of this.store) {
-      if (rec.expiresAt <= now) this.store.delete(token);
-    }
-  }
-
-  async create(
-    userId: string,
-  ): Promise<{ token: string; expiresAt: number }> {
-    // 32 bytes of entropy is the locked decision. base64url is URL/cookie safe
-    // and ~43 chars long.
-    const token = randomBytes(32).toString('base64url');
-    const expiresAt = Date.now() + ttlSeconds() * 1000;
-    this.store.set(token, { userId, expiresAt });
-    return { token, expiresAt };
+class StatelessSessionStore implements SessionStore {
+  async create(userId: string): Promise<{ token: string; expiresAt: number }> {
+    const payload: TokenPayload = { userId, iat: Date.now() };
+    const expiresAt = payload.iat + ttlSeconds() * 1000;
+    return { token: sign(payload), expiresAt };
   }
 
   async get(token: string): Promise<SessionRecord | null> {
-    const rec = this.store.get(token);
-    if (!rec) return null;
-    if (rec.expiresAt <= Date.now()) {
-      this.store.delete(token);
-      return null;
-    }
-    return rec;
+    const payload = verifyToken(token);
+    if (!payload) return null;
+    const expiresAt = verifyExpiresAt(payload.iat);
+    if (!expiresAt) return null;
+    return { userId: payload.userId, expiresAt };
   }
 
-  async delete(token: string): Promise<void> {
-    this.store.delete(token);
+  async delete(_token: string): Promise<void> {
   }
 
-  async touch(token: string): Promise<SessionRecord | null> {
-    const rec = this.store.get(token);
-    if (!rec) return null;
-    if (rec.expiresAt <= Date.now()) {
-      this.store.delete(token);
-      return null;
-    }
-    rec.expiresAt = Date.now() + ttlSeconds() * 1000;
-    return rec;
+  async touch(token: string): Promise<({ token: string } & SessionRecord) | null> {
+    const payload = verifyToken(token);
+    if (!payload) return null;
+    const expiresAt = verifyExpiresAt(payload.iat);
+    if (!expiresAt) return null;
+    const rotated = sign({ userId: payload.userId, iat: Date.now() });
+    return { token: rotated, userId: payload.userId, expiresAt };
   }
 }
 
-// Singleton. Module-level so Next.js route handlers, server components, and
-// middleware all see the same Map across requests in the same process.
 let instance: SessionStore | null = null;
 
 export function getSessionStore(): SessionStore {
-  if (!instance) instance = new InMemorySessionStore();
+  if (!instance) instance = new StatelessSessionStore();
   return instance;
 }
 

@@ -44,12 +44,14 @@ export async function proxy(req: NextRequest) {
   const cookies = parseCookies(cookieHeader);
   const token = cookies[SESSION_COOKIE];
 
+  let sessionToken: string | undefined;
   let userId: string | null = null;
   if (token) {
-    // touch() slides the expiry forward on every request; locked decision is
-    // "refreshed on activity".
     const rec = await getSessionStore().touch(token);
-    if (rec) userId = rec.userId;
+    if (rec) {
+      sessionToken = rec.token;
+      userId = rec.userId;
+    }
   }
 
   if (!userId) {
@@ -64,22 +66,14 @@ export async function proxy(req: NextRequest) {
     return NextResponse.redirect(loginUrl, { status: 302 });
   }
 
-  // Forward the resolved user id to downstream handlers via a header. Locked
-  // decision: handlers trust this header (it cannot originate from the
-  // outside because Next strips client-supplied headers it overrides here).
   const requestHeaders = new Headers(req.headers);
   requestHeaders.set('x-vane-user-id', userId);
   const response = NextResponse.next({
     request: { headers: requestHeaders },
   });
-  // touch() above slid the server-side expiry; re-emit the session cookie
-  // so the browser's Max-Age tracks the server. Without this, a session
-  // with a short TTL (e.g. SESSION_TTL_SECONDS=900) would expire
-  // client-side even while the user is active, dropping them at /login
-  // mid-session.
   response.headers.set(
     'Set-Cookie',
-    buildSessionCookieHeader(token!, getSessionTtlSeconds()),
+    buildSessionCookieHeader(sessionToken!, getSessionTtlSeconds()),
   );
   return response;
 }
