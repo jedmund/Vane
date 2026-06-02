@@ -13,6 +13,11 @@ import path from 'path';
 // the key. Safe on a partial-state file (someone running an older binary
 // that still wrote modelProviders after we removed the in-memory default):
 // we just strip it again on the next boot.
+//
+// Ordering note: this MUST run before ConfigManager loads in
+// src/instrumentation.ts. ConfigManager reads config.json into memory at
+// import time, so cleanup-after-load would leave a stale in-memory copy
+// even after the on-disk file was fixed.
 export function stripStaleModelProvidersKey(): void {
   const dataDir = process.env.DATA_DIR || process.cwd();
   const configPath = path.join(dataDir, 'data', 'config.json');
