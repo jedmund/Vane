@@ -24,7 +24,14 @@ const EmptyProvidersBanner = () => {
       if (!res.ok) {
         // 401 during the brief window after OIDC login but before cookies
         // settle should not surface as a banner; suppress the noise and try
-        // again on the next user-driven trigger.
+        // again on the next user-driven trigger. The chat surface is gated
+        // by the proxy so a 401 here outside that boot window points at an
+        // upstream auth bug; log it loudly enough to spot if it ever fires.
+        if (res.status === 401) {
+          console.warn(
+            'EmptyProvidersBanner: /api/providers returned 401 - unexpected for an authenticated chat surface',
+          );
+        }
         setProviderCount(null);
         return;
       }
