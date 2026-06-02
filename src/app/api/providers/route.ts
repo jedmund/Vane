@@ -1,9 +1,15 @@
 import ModelRegistry from '@/lib/models/registry';
 import { NextRequest } from 'next/server';
+import {
+  getCurrentUserId,
+  MissingUserIdHeaderError,
+  missingUserIdResponse,
+} from '@/lib/db/scoped';
 
 export const GET = async (req: Request) => {
   try {
-    const registry = new ModelRegistry();
+    const userId = getCurrentUserId(req);
+    const registry = new ModelRegistry(userId);
 
     const activeProviders = await registry.getActiveProviders();
 
@@ -20,6 +26,7 @@ export const GET = async (req: Request) => {
       },
     );
   } catch (err) {
+    if (err instanceof MissingUserIdHeaderError) return missingUserIdResponse();
     console.error('An error occurred while fetching providers', err);
     return Response.json(
       {
@@ -34,6 +41,7 @@ export const GET = async (req: Request) => {
 
 export const POST = async (req: NextRequest) => {
   try {
+    const userId = getCurrentUserId(req);
     const body = await req.json();
     const { type, name, config } = body;
 
@@ -48,7 +56,7 @@ export const POST = async (req: NextRequest) => {
       );
     }
 
-    const registry = new ModelRegistry();
+    const registry = new ModelRegistry(userId);
 
     const newProvider = await registry.addProvider(type, name, config);
 
@@ -61,6 +69,7 @@ export const POST = async (req: NextRequest) => {
       },
     );
   } catch (err) {
+    if (err instanceof MissingUserIdHeaderError) return missingUserIdResponse();
     console.error('An error occurred while creating provider', err);
     return Response.json(
       {

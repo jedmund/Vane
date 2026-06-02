@@ -1,12 +1,18 @@
 import ModelRegistry from '@/lib/models/registry';
 import { Model } from '@/lib/models/types';
 import { NextRequest } from 'next/server';
+import {
+  getCurrentUserId,
+  MissingUserIdHeaderError,
+  missingUserIdResponse,
+} from '@/lib/db/scoped';
 
 export const POST = async (
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) => {
   try {
+    const userId = getCurrentUserId(req);
     const { id } = await params;
 
     const body: Partial<Model> & { type: 'embedding' | 'chat' } =
@@ -23,7 +29,7 @@ export const POST = async (
       );
     }
 
-    const registry = new ModelRegistry();
+    const registry = new ModelRegistry(userId);
 
     await registry.addProviderModel(id, body.type, body);
 
@@ -36,6 +42,7 @@ export const POST = async (
       },
     );
   } catch (err) {
+    if (err instanceof MissingUserIdHeaderError) return missingUserIdResponse();
     console.error('An error occurred while adding provider model', err);
     return Response.json(
       {
@@ -53,6 +60,7 @@ export const DELETE = async (
   { params }: { params: Promise<{ id: string }> },
 ) => {
   try {
+    const userId = getCurrentUserId(req);
     const { id } = await params;
 
     const body: { key: string; type: 'embedding' | 'chat' } = await req.json();
@@ -68,7 +76,7 @@ export const DELETE = async (
       );
     }
 
-    const registry = new ModelRegistry();
+    const registry = new ModelRegistry(userId);
 
     await registry.removeProviderModel(id, body.type, body.key);
 
@@ -81,6 +89,7 @@ export const DELETE = async (
       },
     );
   } catch (err) {
+    if (err instanceof MissingUserIdHeaderError) return missingUserIdResponse();
     console.error('An error occurred while deleting provider model', err);
     return Response.json(
       {
