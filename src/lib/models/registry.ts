@@ -4,14 +4,20 @@ import { getProvidersForUser, StoredProvider } from '../db/providers';
 import { providers } from './providers';
 import { MinimalProvider, ModelList } from './types';
 
+// Internal extension of ConfigModelProvider so the registry can carry the
+// scope (instance vs personal) through to the serializer without losing it
+// to the toConfigShape conversion.
+type ActiveProvider = ConfigModelProvider & {
+  scope: 'instance' | 'personal';
+  provider: BaseModelProvider<any>;
+};
+
 // Registry is per-request because provider visibility is per-user (instance
 // rows visible to everyone, personal rows only to their owner). The userId
 // is required and never optional: silently expanding scope to "all
 // providers" would defeat the whole point of the admin/user split.
 class ModelRegistry {
-  activeProviders: (ConfigModelProvider & {
-    provider: BaseModelProvider<any>;
-  })[] = [];
+  activeProviders: ActiveProvider[] = [];
 
   constructor(private userId: string) {
     this.initializeActiveProviders();
@@ -27,6 +33,7 @@ class ModelRegistry {
 
         this.activeProviders.push({
           ...this.toConfigShape(row),
+          scope: row.userId === null ? 'instance' : 'personal',
           provider: createProviderInstance(
             Provider,
             row.id,
@@ -88,6 +95,8 @@ class ModelRegistry {
         providers.push({
           id: p.id,
           name: p.name,
+          type: p.type,
+          scope: p.scope,
           chatModels: m.chat,
           embeddingModels: m.embedding,
         });
@@ -117,57 +126,11 @@ class ModelRegistry {
     return model;
   }
 
-  // Mutation paths are stubs in Phase 3. Provider writes used to flow
-  // through configManager and end up in config.json; the providers table
-  // is the source of truth now and Phase 4 owns the rewrite of the
-  // /api/providers route handlers to insert/update/delete rows directly.
-  // These throw so a regression surfaces loudly rather than silently
-  // dropping the write.
-  async addProvider(
-    _type: string,
-    _name: string,
-    _config: Record<string, any>,
-  ): Promise<ConfigModelProvider> {
-    throw new Error(
-      'ModelRegistry.addProvider is a Phase 3 stub; Phase 4 will write directly to the providers table.',
-    );
-  }
-
-  async removeProvider(_providerId: string): Promise<void> {
-    throw new Error(
-      'ModelRegistry.removeProvider is a Phase 3 stub; Phase 4 will write directly to the providers table.',
-    );
-  }
-
-  async updateProvider(
-    _providerId: string,
-    _name: string,
-    _config: any,
-  ): Promise<ConfigModelProvider> {
-    throw new Error(
-      'ModelRegistry.updateProvider is a Phase 3 stub; Phase 4 will write directly to the providers table.',
-    );
-  }
-
-  async addProviderModel(
-    _providerId: string,
-    _type: 'embedding' | 'chat',
-    _model: any,
-  ): Promise<any> {
-    throw new Error(
-      'ModelRegistry.addProviderModel is a Phase 3 stub; Phase 4 will write directly to the providers table.',
-    );
-  }
-
-  async removeProviderModel(
-    _providerId: string,
-    _type: 'embedding' | 'chat',
-    _modelKey: string,
-  ): Promise<void> {
-    throw new Error(
-      'ModelRegistry.removeProviderModel is a Phase 3 stub; Phase 4 will write directly to the providers table.',
-    );
-  }
+  // Mutation paths intentionally removed. Provider writes happen in the
+  // /api/providers route handlers via the helpers in src/lib/db/providers.ts;
+  // adding back any mutation method here would re-create the pre-Phase 1
+  // pattern of routing writes through the registry, which made access control
+  // diffuse and easy to bypass.
 }
 
 export default ModelRegistry;

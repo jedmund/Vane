@@ -19,6 +19,12 @@ type ProviderMetadata = {
 type MinimalProvider = {
   id: string;
   name: string;
+  // type and scope are surfaced so the frontend can render badges and
+  // gate edit/delete affordances per-row without a second fetch. Optional
+  // for backwards compatibility with any existing consumer that constructs
+  // a MinimalProvider directly.
+  type?: string;
+  scope?: 'instance' | 'personal';
   chatModels: Model[];
   embeddingModels: Model[];
 };
