@@ -1217,3 +1217,125 @@ both calling the Phase 4 endpoint. Manual component-tree trace:
 - Delete modal does a hard confirmation step, then DELETEs, then
   invokes the parent callback to drop the row.
 
+---
+
+## Phase 7: remove Welcome / first-run onboarding (impl agent)
+
+Date: 2026-06-01
+
+### Why this phase actually mattered
+
+The deployed Vane was blocked on this. The animated Welcome / SetupWizard
+fired from `RootLayout` on every uninitialised render, before the OIDC
+cookie chain had a chance to settle behind Traefik. The cookie write +
+redirect dance never completed because the welcome animation already
+owned the viewport. Removing the gate was the unblocker for end-to-end
+testing of every Phase 1-6 deliverable.
+
+### Files deleted vs trimmed
+
+Fully deleted:
+- `src/components/Setup/SetupWizard.tsx`
+- `src/components/Setup/SetupConfig.tsx`
+- `src/components/Setup/` (now empty)
+- `src/app/api/config/setup-complete/route.ts` (the POST endpoint
+  SetupConfig hit to flip the flag)
+
+Trimmed:
+- `src/app/layout.tsx`: dropped the `setupComplete` conditional and the
+  SetupWizard import. ChatProvider + Sidebar now mount unconditionally.
+- `src/lib/config/index.ts`: removed `isSetupComplete` and
+  `markSetupComplete`. Default in-memory `setupComplete` flipped to
+  `true` so the on-disk file written for fresh installs is honest about
+  the field being a no-op.
+- `src/lib/config/types.ts`: added a comment marking `setupComplete` as
+  retained for backward compat only.
+
+The `setupComplete` field on the Config type and in the default config
+is kept so existing config.json files (which all carry the key) round-
+trip without rewrite or migration churn. No code reads it.
+
+### setupComplete code paths and how each was resolved
+
+There were three readers + one writer:
+
+1. `RootLayout` in `src/app/layout.tsx` gated the ChatProvider tree
+   behind `configManager.isSetupComplete()`. Removed; tree mounts
+   unconditionally.
+2. `configManager.isSetupComplete()` and `markSetupComplete()`
+   in `src/lib/config/index.ts`. Both methods deleted.
+3. `/api/config/setup-complete` POST route. Deleted entirely; nothing
+   else called it.
+
+Grep audit confirms no remaining functional reads:
+- `rg "setupComplete" src/` returns only the type declaration and the
+  hardcoded `true` default in configManager, plus three comment lines
+  documenting why the field is dead.
+- `rg "Welcome|welcome to vane" -i src/` returns two comments in
+  EmptyProvidersBanner and configManager describing the removed flow.
+- `rg "first.?run|first.?time.?setup|onboarding" -i src/` returns the
+  same two comments.
+
+### Empty-providers banner placement
+
+Mounted inside `ChatWindow` immediately above the messages-vs-EmptyChat
+branch, so it overlays both the empty-chat home and an in-progress
+conversation. Banner uses `position: fixed` with `top-0 left-0
+lg:left-[72px] right-0` so it slots above the sidebar on desktop and
+spans full-width on mobile.
+
+Banner is not dismissible: provider absence makes chat non-functional,
+so it stays until at least one provider is visible. Refetches
+`/api/providers` whenever the embedded Settings dialogue closes, so
+adding a connection clears the banner without a page reload.
+
+Banner styling uses the brand sky tint (`bg-sky-500/10`,
+`border-sky-500/30`) that Phase 5/6 chose for the existing empty-state
+illustration in the Models panel, so the visual language is consistent.
+
+### Deep-linking the Settings dialogue
+
+Added an optional `initialSection` prop to `SettingsDialogue`. When
+provided, the dialogue snaps to that section every time `isOpen`
+transitions to true, not just on first mount. The banner passes
+`initialSection="personal-connections"` so users land directly on the
+panel they need.
+
+Did NOT auto-open the dialogue on first-run as the plan locked. Users
+click the button explicitly.
+
+### /api/config modelProviders bug fixed
+
+The pre-existing bug (flagged in Phase 6's decision log) is fixed in
+the same PR. The handler used to map over `values.modelProviders` from
+`configManager.getCurrentConfig()`, which has been undefined / empty
+ever since Phase 1 moved providers to SQLite. The list now comes from
+`ModelRegistry.getActiveProviders(userId)`, matching the
+`/api/providers` GET behaviour. The wire response zeros the `config`
+blob because `/api/config` has no per-row authorisation gate; callers
+that need the api_key go through `/api/providers/[id]/secret`.
+
+### Visual changes the reviewer should know about
+
+- Chat page now has a fixed-position banner at the top when no
+  providers are visible. Sized to slot below the OS status chrome and
+  above any in-page content; uses pointer-events: none on the outer
+  wrapper so it does not block clicks on the chat area to either side
+  of the banner box.
+- `lg:left-[72px]` offsets the banner past the desktop sidebar so it
+  does not overlap the sidebar's icon column.
+- No other layout changes. The EmptyChat hero ("Research begins
+  here.") and message input are unchanged.
+
+### Verification
+
+- `yarn build` clean.
+- Grep audit (see above) clean.
+- Manual trace:
+  - Banner mounts only when `/api/providers` returns `providers: []`.
+    Returns `null` while loading or on a non-200 response (e.g. the
+    brief 401 window after login).
+  - Clicking Open Settings opens the dialogue at Personal Connections.
+  - Closing the dialogue refetches the provider list; if at least one
+    provider was added, the banner unmounts.
+
