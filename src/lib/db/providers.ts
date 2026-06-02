@@ -1,4 +1,5 @@
 import { isNull, or, eq } from 'drizzle-orm';
+import { ulid } from 'ulid';
 import db from '@/lib/db';
 import { providers as providersTable } from '@/lib/db/schema';
 import { Model } from '@/lib/models/types';
@@ -80,4 +81,145 @@ export function getProvidersForUser(userId: string): StoredProvider[] {
   return rows
     .map((r) => parseRow(r))
     .filter((p): p is StoredProvider => p !== null);
+}
+
+// Returns the row whether or not the caller can see it. Visibility checks
+// are the caller's job (see canUserSeeProvider) because the right response
+// for "exists but not yours" differs from "does not exist anywhere" only at
+// the route layer (404 vs 403).
+export function getProviderById(id: string): StoredProvider | null {
+  const row = db
+    .select()
+    .from(providersTable)
+    .where(eq(providersTable.id, id))
+    .get();
+
+  if (!row) return null;
+  return parseRow(row);
+}
+
+// Centralized visibility predicate. Instance rows (userId IS NULL) are
+// visible to everyone; personal rows are visible to their owner and to
+// admins. Used by route handlers to gate /api/providers/[id] reads.
+export function canUserSeeProvider(
+  provider: StoredProvider,
+  userId: string,
+  isAdmin: boolean,
+): boolean {
+  if (provider.userId === null) return true;
+  if (isAdmin) return true;
+  return provider.userId === userId;
+}
+
+// Mutation predicate. Instance rows require admin to mutate; personal rows
+// allow admin (override) or owner. Non-admin non-owner gets denied even if
+// they can read the row.
+export function canUserMutateProvider(
+  provider: StoredProvider,
+  userId: string,
+  isAdmin: boolean,
+): boolean {
+  if (provider.userId === null) return isAdmin;
+  if (isAdmin) return true;
+  return provider.userId === userId;
+}
+
+// Folds the typed config + model lists back into the single on-disk JSON
+// blob the schema expects. Kept private to this module so callers cannot
+// accidentally store a half-merged shape.
+function serializeBlob(
+  config: Record<string, any>,
+  chatModels: Model[],
+  embeddingModels: Model[],
+): string {
+  return JSON.stringify({
+    ...config,
+    chatModels,
+    embeddingModels,
+  });
+}
+
+export type CreateProviderInput = {
+  userId: string | null;
+  type: string;
+  name: string;
+  config: Record<string, any>;
+  chatModels?: Model[];
+  embeddingModels?: Model[];
+};
+
+export function createProvider(input: CreateProviderInput): StoredProvider {
+  const id = ulid();
+  const createdAt = new Date().toISOString();
+  const chatModels = input.chatModels ?? [];
+  const embeddingModels = input.embeddingModels ?? [];
+
+  db.insert(providersTable)
+    .values({
+      id,
+      userId: input.userId,
+      type: input.type,
+      name: input.name,
+      config: serializeBlob(input.config, chatModels, embeddingModels),
+      createdAt,
+    })
+    .run();
+
+  return {
+    id,
+    userId: input.userId,
+    type: input.type,
+    name: input.name,
+    config: input.config,
+    chatModels,
+    embeddingModels,
+    createdAt,
+  };
+}
+
+export type UpdateProviderInput = {
+  name?: string;
+  config?: Record<string, any>;
+  chatModels?: Model[];
+  embeddingModels?: Model[];
+};
+
+// Read-modify-write so we can preserve chatModels/embeddingModels when only
+// name or config is being patched. Type is intentionally not updatable;
+// callers that want a different type delete and recreate (locked decision).
+export function updateProviderRow(
+  id: string,
+  patch: UpdateProviderInput,
+): StoredProvider | null {
+  const current = getProviderById(id);
+  if (!current) return null;
+
+  const nextName = patch.name ?? current.name;
+  const nextConfig = patch.config ?? current.config;
+  const nextChatModels = patch.chatModels ?? current.chatModels;
+  const nextEmbeddingModels = patch.embeddingModels ?? current.embeddingModels;
+
+  db.update(providersTable)
+    .set({
+      name: nextName,
+      config: serializeBlob(nextConfig, nextChatModels, nextEmbeddingModels),
+    })
+    .where(eq(providersTable.id, id))
+    .run();
+
+  return {
+    ...current,
+    name: nextName,
+    config: nextConfig,
+    chatModels: nextChatModels,
+    embeddingModels: nextEmbeddingModels,
+  };
+}
+
+export function deleteProviderRow(id: string): boolean {
+  const result = db
+    .delete(providersTable)
+    .where(eq(providersTable.id, id))
+    .run();
+  return result.changes > 0;
 }
