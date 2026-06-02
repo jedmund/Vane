@@ -229,52 +229,10 @@ class ConfigManager {
     this.saveConfig();
   }
 
-  // These provider mutation methods used to write to config.json. Providers
-  // now live in the SQLite providers table; Phase 4 owns the rewrite of
-  // the /api/providers route handlers to write to the DB directly. Until
-  // that lands, calling any of these throws so a regression surfaces
-  // loudly rather than silently dropping writes.
-  public addModelProvider(_type: string, _name: string, _config: any): never {
-    throw new Error(
-      'configManager.addModelProvider is gone; providers are stored in the DB. Phase 4 will route this through /api/providers.',
-    );
-  }
-
-  public removeModelProvider(_id: string): never {
-    throw new Error(
-      'configManager.removeModelProvider is gone; providers are stored in the DB. Phase 4 will route this through /api/providers.',
-    );
-  }
-
-  public async updateModelProvider(
-    _id: string,
-    _name: string,
-    _config: any,
-  ): Promise<never> {
-    throw new Error(
-      'configManager.updateModelProvider is gone; providers are stored in the DB. Phase 4 will route this through /api/providers.',
-    );
-  }
-
-  public addProviderModel(
-    _providerId: string,
-    _type: 'embedding' | 'chat',
-    _model: any,
-  ): never {
-    throw new Error(
-      'configManager.addProviderModel is gone; providers are stored in the DB. Phase 4 will route this through /api/providers.',
-    );
-  }
-
-  public removeProviderModel(
-    _providerId: string,
-    _type: 'embedding' | 'chat',
-    _modelKey: string,
-  ): never {
-    throw new Error(
-      'configManager.removeProviderModel is gone; providers are stored in the DB. Phase 4 will route this through /api/providers.',
-    );
-  }
+  // Provider mutation methods removed. Providers live in the SQLite
+  // providers table and writes happen in the /api/providers route handlers
+  // via src/lib/db/providers.ts; the config-json-based mutators were dead
+  // weight after Phase 1 made the DB the source of truth.
 
   public isSetupComplete() {
     return this.currentConfig.setupComplete;
