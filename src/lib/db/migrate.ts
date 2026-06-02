@@ -1,9 +1,11 @@
 import Database from 'better-sqlite3';
 import path from 'path';
 import fs from 'fs';
+import { ulid } from 'ulid';
 
 const DATA_DIR = process.env.DATA_DIR || process.cwd();
 const dbPath = path.join(DATA_DIR, './data/db.sqlite');
+const configPath = path.join(DATA_DIR, './data/config.json');
 
 const db = new Database(dbPath);
 
@@ -268,6 +270,58 @@ fs.readdirSync(migrationsFolder)
 
         db.exec('DROP TABLE messages;');
         db.exec('ALTER TABLE messages_new RENAME TO messages;');
+      } else if (migrationName === '0004') {
+        // Schema changes are SQL; the modelProviders backfill from
+        // data/config.json is data-driven so it lives in JS, gated by the
+        // same ran_migrations row that gates the SQL. Idempotent because
+        // re-running this migration is skipped at the top of the loop.
+        statements.forEach((stmt) => {
+          if (stmt.trim()) {
+            db.exec(stmt);
+          }
+        });
+
+        if (fs.existsSync(configPath)) {
+          try {
+            const raw = fs.readFileSync(configPath, 'utf-8');
+            const cfg = JSON.parse(raw);
+            const providers = Array.isArray(cfg?.modelProviders)
+              ? cfg.modelProviders
+              : [];
+
+            const insertProvider = db.prepare(
+              'INSERT INTO providers (id, userId, type, name, config, createdAt) VALUES (?, NULL, ?, ?, ?, ?)',
+            );
+            const now = new Date().toISOString();
+
+            providers.forEach((p: any) => {
+              const cfgBlob = {
+                ...(p.config ?? {}),
+                chatModels: Array.isArray(p.chatModels) ? p.chatModels : [],
+                embeddingModels: Array.isArray(p.embeddingModels)
+                  ? p.embeddingModels
+                  : [],
+              };
+              insertProvider.run(
+                ulid(),
+                p.type ?? 'unknown',
+                p.name ?? p.type ?? 'Unnamed',
+                JSON.stringify(cfgBlob),
+                now,
+              );
+            });
+
+            console.log(
+              `Seeded ${providers.length} instance provider(s) from config.json`,
+            );
+          } catch (err) {
+            console.error(
+              'Failed to seed instance providers from config.json:',
+              err,
+            );
+            throw err;
+          }
+        }
       } else {
         // Execute each statement separately
         statements.forEach((stmt) => {
