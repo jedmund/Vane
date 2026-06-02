@@ -15,6 +15,7 @@ import {
 } from '@/lib/config/types';
 import Select from '@/components/ui/Select';
 import { toast } from 'sonner';
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser';
 
 const AddProvider = ({
   modelProviders,
@@ -30,6 +31,13 @@ const AddProvider = ({
   const [config, setConfig] = useState<Record<string, any>>({});
   const [name, setName] = useState('');
   const [loading, setLoading] = useState(false);
+  // Default to instance for admins because the historical Add Provider flow
+  // (before the admin/user split) always created what is now an instance row.
+  // Personal stays an opt-in for admins who want to add their own keys.
+  const [scope, setScope] = useState<'instance' | 'personal'>('instance');
+
+  const { user } = useCurrentUser();
+  const isAdmin = user?.isAdmin === true;
 
   const providerConfigMap = useMemo(() => {
     const map: Record<string, { name: string; fields: UIConfigField[] }> = {};
@@ -71,10 +79,37 @@ const AddProvider = ({
           type: selectedProvider,
           name: name,
           config: config,
+          // Only send scope when the caller is admin; non-admins always get
+          // the server-side default ('personal') and avoid sending a field
+          // they cannot legitimately set.
+          ...(isAdmin ? { scope } : {}),
         }),
       });
 
       if (!res.ok) {
+        // The two 403 bodies from /api/providers (admin_required and
+        // forbidden) map to distinct user-facing messages so a non-admin
+        // who somehow attempts an instance write sees why it failed
+        // instead of a generic 'failed to add provider'.
+        if (res.status === 403) {
+          let code: string | null = null;
+          try {
+            const body = await res.json();
+            code = body?.error ?? null;
+          } catch {
+            // Body was not JSON; fall through to generic 403 message.
+          }
+          if (code === 'admin_required') {
+            toast.error(
+              'Admin role required to create an instance connection.',
+            );
+          } else if (code === 'forbidden') {
+            toast.error('This connection belongs to another user.');
+          } else {
+            toast.error('You do not have permission to add this connection.');
+          }
+          return;
+        }
         throw new Error('Failed to add provider');
       }
 
@@ -83,12 +118,12 @@ const AddProvider = ({
       setProviders((prev) => [...prev, data]);
 
       toast.success('Connection added successfully.');
+      setOpen(false);
     } catch (error) {
       console.error('Error adding provider:', error);
       toast.error('Failed to add connection.');
     } finally {
       setLoading(false);
-      setOpen(false);
     }
   };
 
@@ -126,6 +161,45 @@ const AddProvider = ({
                   <div className="border-t border-light-200 dark:border-dark-200" />
                   <div className="flex-1 overflow-y-auto px-6 py-4">
                     <div className="flex flex-col space-y-4">
+                      {isAdmin && (
+                        <div className="flex flex-col items-start space-y-2">
+                          <label className="text-xs text-black/70 dark:text-white/70">
+                            Scope
+                          </label>
+                          {/* Two-button toggle rather than a Select so the
+                              choice is visible at a glance; only admins see
+                              this control, and it has exactly two options. */}
+                          <div className="flex flex-row gap-2 w-full">
+                            <button
+                              type="button"
+                              onClick={() => setScope('instance')}
+                              className={
+                                scope === 'instance'
+                                  ? 'flex-1 px-3 py-2 rounded-lg text-xs border border-sky-500 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-medium transition'
+                                  : 'flex-1 px-3 py-2 rounded-lg text-xs border border-light-200 dark:border-dark-200 bg-light-secondary/50 dark:bg-dark-secondary/50 text-black/70 dark:text-white/70 hover:border-light-300 hover:dark:border-dark-300 transition'
+                              }
+                            >
+                              Instance
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => setScope('personal')}
+                              className={
+                                scope === 'personal'
+                                  ? 'flex-1 px-3 py-2 rounded-lg text-xs border border-sky-500 bg-sky-500/10 text-sky-600 dark:text-sky-400 font-medium transition'
+                                  : 'flex-1 px-3 py-2 rounded-lg text-xs border border-light-200 dark:border-dark-200 bg-light-secondary/50 dark:bg-dark-secondary/50 text-black/70 dark:text-white/70 hover:border-light-300 hover:dark:border-dark-300 transition'
+                              }
+                            >
+                              Personal
+                            </button>
+                          </div>
+                          <p className="text-[10px] text-black/50 dark:text-white/50">
+                            Instance connections are shared with everyone on
+                            this server. Personal connections are only visible
+                            to you.
+                          </p>
+                        </div>
+                      )}
                       <div className="flex flex-col items-start space-y-2">
                         <label className="text-xs text-black/70 dark:text-white/70">
                           Select connection type
