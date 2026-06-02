@@ -5,7 +5,7 @@ so the orchestrator (and the eventual PR reviewer) can see what was decided and 
 
 ---
 
-## Phase 1 / Phase 2 — data model migration (impl agent)
+## Phase 1 / Phase 2: data model migration (impl agent)
 
 Date: 2026-06-01
 
@@ -27,7 +27,7 @@ Requirements call for "ULID or random" for the users table PK. Chose ULID:
 - 26 chars vs nanoid's variable length; predictable storage cost.
 - Single tiny dep (`ulid`), no native bindings, no peer-dep churn.
 
-### Column name: userId (camelCase) — not user_id
+### Column name: userId (camelCase), not user_id
 
 The orchestrator prompt explicitly flagged this as a non-obvious choice.
 The existing schema is uniformly camelCase at the SQL layer:
@@ -453,7 +453,7 @@ hook would race the proxy.
 
 ---
 
-## Phase 4 — security headers + SearXNG secret (impl agent)
+## Phase 4: security headers + SearXNG secret (impl agent)
 
 Date: 2026-06-01
 
@@ -576,6 +576,6 @@ first-run flow. We also did not take the `SECURITY-AUDIT.md` or
 Multi-line CSP via header arrays is not how the HTTP spec works; the
 final header is one line. We assemble directives as an array for
 readability then `join('; ')`. The trailing-`;` debate (some examples
-add one, the spec doesn't require it) is resolved by omitting it —
-matches the W3C example output and avoids a dangling-semicolon parse
-quirk in older browsers.
+add one, the spec doesn't require it) is resolved by omitting it,
+which matches the W3C example output and avoids a dangling-semicolon
+parse quirk in older browsers.
