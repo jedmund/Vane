@@ -28,7 +28,7 @@ class APISearchAgent {
 
     if (!classification.classification.skipSearch) {
       const researcher = new Researcher();
-      searchPromise = researcher.research(SessionManager.createSession(), {
+      searchPromise = researcher.research(SessionManager.createSession(session.userId), {
         chatHistory: input.chatHistory,
         followUp: input.followUp,
         classification: classification,
