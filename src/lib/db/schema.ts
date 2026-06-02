@@ -41,11 +41,36 @@ export const users = sqliteTable(
     email: text('email'),
     name: text('name'),
     createdAt: text('createdAt').notNull(),
+    // Boolean stored as integer (0/1). Default false: admin status must be
+    // granted explicitly (first-OIDC-user bootstrap or OIDC_ADMIN_EMAILS),
+    // never inherited by accident. Set once at user creation; later flips
+    // are out of scope for v1.
+    isAdmin: integer('isAdmin', { mode: 'boolean' }).notNull().default(false),
   },
   (table) => ({
     // Unique index, not a UNIQUE column constraint: SQLite treats NULL as
     // distinct so the synthetic 'legacy' row (sub=NULL) does not collide.
     subIdx: uniqueIndex('users_sub_idx').on(table.sub),
+  }),
+);
+
+// Model-provider connections (OpenAI, Ollama, etc). userId nullable so a
+// NULL row represents an instance-scope connection visible to everyone;
+// non-NULL is a personal connection visible only to that user (and to
+// admins via the secret-fetch endpoint). The config column carries the
+// raw JSON blob including any api_key.
+export const providers = sqliteTable(
+  'providers',
+  {
+    id: text('id').primaryKey(),
+    userId: text('userId').references(() => users.id),
+    type: text('type').notNull(),
+    name: text('name').notNull(),
+    config: text('config').notNull(),
+    createdAt: text('createdAt').notNull(),
+  },
+  (table) => ({
+    userIdIdx: index('providers_user_id_idx').on(table.userId),
   }),
 );
 
