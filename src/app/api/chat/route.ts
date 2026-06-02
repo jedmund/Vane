@@ -181,7 +181,7 @@ export const POST = async (req: Request) => {
     });
 
     const agent = new SearchAgent();
-    const session = SessionManager.createSession();
+    const session = SessionManager.createSession(userId);
 
     const responseStream = new TransformStream();
     const writer = responseStream.writable.getWriter();
