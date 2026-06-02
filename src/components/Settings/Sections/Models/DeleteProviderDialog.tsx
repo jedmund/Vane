@@ -35,6 +35,9 @@ const DeleteProvider = ({
       });
 
       toast.success('Connection deleted successfully.');
+      // Sibling dialogs (Update/Edit) close on success; this one was missing
+      // the call and the modal sat open until the user clicked Cancel.
+      setOpen(false);
     } catch (error) {
       console.error('Error deleting provider:', error);
       toast.error('Failed to delete connection.');
