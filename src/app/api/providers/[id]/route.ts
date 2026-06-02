@@ -1,11 +1,17 @@
 import ModelRegistry from '@/lib/models/registry';
 import { NextRequest } from 'next/server';
+import {
+  getCurrentUserId,
+  MissingUserIdHeaderError,
+  missingUserIdResponse,
+} from '@/lib/db/scoped';
 
 export const DELETE = async (
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
 ) => {
   try {
+    const userId = getCurrentUserId(req);
     const { id } = await params;
 
     if (!id) {
@@ -19,7 +25,7 @@ export const DELETE = async (
       );
     }
 
-    const registry = new ModelRegistry();
+    const registry = new ModelRegistry(userId);
     await registry.removeProvider(id);
 
     return Response.json(
@@ -31,6 +37,7 @@ export const DELETE = async (
       },
     );
   } catch (err: any) {
+    if (err instanceof MissingUserIdHeaderError) return missingUserIdResponse();
     console.error('An error occurred while deleting provider', err.message);
     return Response.json(
       {
@@ -48,6 +55,7 @@ export const PATCH = async (
   { params }: { params: Promise<{ id: string }> },
 ) => {
   try {
+    const userId = getCurrentUserId(req);
     const body = await req.json();
     const { name, config } = body;
     const { id } = await params;
@@ -63,7 +71,7 @@ export const PATCH = async (
       );
     }
 
-    const registry = new ModelRegistry();
+    const registry = new ModelRegistry(userId);
 
     const updatedProvider = await registry.updateProvider(id, name, config);
 
@@ -76,6 +84,7 @@ export const PATCH = async (
       },
     );
   } catch (err: any) {
+    if (err instanceof MissingUserIdHeaderError) return missingUserIdResponse();
     console.error('An error occurred while updating provider', err.message);
     return Response.json(
       {
