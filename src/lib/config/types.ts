@@ -58,6 +58,12 @@ type ConfigModelProvider = {
   embeddingModels: Model[];
   config: { [key: string]: any };
   hash: string;
+  // Optional because the legacy /api/config payload still hydrates this type
+  // from a code path that does not carry scope, and Phase 4 is the only
+  // surface that guarantees the field. Consumers that need to gate UI on
+  // scope must default-handle undefined (treat as 'personal' since list
+  // visibility already filters to rows the caller owns plus instance rows).
+  scope?: 'instance' | 'personal';
 };
 
 type Config = {
