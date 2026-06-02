@@ -1,6 +1,6 @@
 import { Dialog, DialogPanel } from '@headlessui/react';
 import { Check, Copy, Eye, Loader2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ConfigModelProvider } from '@/lib/config/types';
 import { toast } from 'sonner';
@@ -74,13 +74,32 @@ const RevealSecretDialog = ({
     };
   }, [open, modelProvider.id]);
 
+  // Tracks the in-flight "Copied!" indicator clear so we can cancel it on
+  // modal close (otherwise it fires against an unmounted component, no-op
+  // but sloppy, and keeps the "Copied!" state visible to devtools snapshots
+  // taken in the 1500ms window before unmount).
+  const copyResetTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (open) return;
+    if (copyResetTimeoutRef.current !== null) {
+      clearTimeout(copyResetTimeoutRef.current);
+      copyResetTimeoutRef.current = null;
+    }
+    setCopiedKey(null);
+  }, [open]);
+
   const handleCopy = async (fieldKey: string, value: string) => {
     try {
       await navigator.clipboard.writeText(value);
       setCopiedKey(fieldKey);
       // Short-lived visual confirmation; no toast on top of the modal so it
       // does not stack on Headless UI's portal layer.
-      setTimeout(() => {
+      if (copyResetTimeoutRef.current !== null) {
+        clearTimeout(copyResetTimeoutRef.current);
+      }
+      copyResetTimeoutRef.current = setTimeout(() => {
+        copyResetTimeoutRef.current = null;
         setCopiedKey((current) => (current === fieldKey ? null : current));
       }, 1500);
     } catch (err) {
