@@ -6,6 +6,7 @@ import {
   buildSessionCookieHeader,
   clearStateCookieHeader,
   decodeStateCookie,
+  getAppOrigin,
   sanitizeReturnTo,
 } from '@/lib/auth/cookies';
 import {
@@ -95,7 +96,7 @@ export async function GET(req: NextRequest) {
 
   const session = await getSessionStore().create(user.id);
   const returnTo = sanitizeReturnTo(state.returnTo);
-  const res = NextResponse.redirect(new URL(returnTo, url.origin), {
+  const res = NextResponse.redirect(new URL(returnTo, getAppOrigin()), {
     status: 302,
   });
   res.headers.append('Set-Cookie', clearStateCookieHeader());

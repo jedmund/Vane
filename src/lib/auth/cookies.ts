@@ -115,6 +115,20 @@ export function clearSessionCookieHeader(): string {
   });
 }
 
+// Public-facing origin used for post-auth redirects and cookie responses.
+// Must be set via APP_ORIGIN when running behind a reverse proxy (Traefik,
+// Nginx) where req.url carries an internal Docker hostname. Falls back to
+// OIDC_REDIRECT_URI's origin, then to localhost:3000 for local dev.
+export function getAppOrigin(): string {
+  const explicit = process.env.APP_ORIGIN;
+  if (explicit && explicit.length > 0) return explicit.replace(/\/+$/, '');
+  const redirectUri = process.env.OIDC_REDIRECT_URI;
+  if (redirectUri && redirectUri.length > 0) {
+    return new URL(redirectUri).origin;
+  }
+  return 'http://localhost:3000';
+}
+
 // returnTo is only safe if it points back into this app. Reject anything that
 // could escape to a different origin or protocol. Locked decision: same-origin
 // paths only, reject //, http://, https://.
