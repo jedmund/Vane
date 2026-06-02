@@ -1110,3 +1110,110 @@ useCurrentUser hook surfaces it on the CurrentUser interface. Phase 6
 (new Settings panels) and Phase 7 (welcome-screen removal) remain
 untouched.
 
+---
+
+## Phase 6: Personal and Instance Connections settings panels (impl agent)
+
+Date: 2026-06-01
+
+### Reveal-secret rendered in a modal, not inline expansion
+
+The api_key sits behind a deliberate user action: clicking the eye
+icon opens a modal that fetches `/api/providers/[id]/secret`. Closing
+the modal drops the parsed config from React state immediately so an
+accidental devtools snapshot does not capture it after the user has
+visually dismissed the reveal. An inline expanded row would keep the
+secret visible (and present in the DOM) for the lifetime of the page
+view, which is a worse default for a credential surface. Copying out
+of a modal is also more reliable than from a row that may scroll off
+screen mid-click.
+
+### Edit form is a new component, not a reuse of UpdateProviderDialog
+
+The existing UpdateProviderDialog in `Sections/Models/` hydrates from
+`/api/config`, which strips the api_key. That dialog works for the
+general Models browse view because users rarely re-enter their key on
+edit. For the new Connections panels we explicitly want the api_key
+pre-populated so an operator can tweak the connection name or base
+URL without retyping the credential. EditConnectionDialog calls
+`/api/providers/[id]/secret` first, then renders a form with those
+values. The duplication is real (about 100 LoC shared with
+UpdateProviderDialog) but extracting a shared form component would
+have meant changing the existing Models flow at the same time, which
+is outside Phase 6 scope. Marked as a follow-up.
+
+### DeleteConnectionDialog mirrors DeleteProviderDialog with a callback API
+
+The existing DeleteProviderDialog calls `setProviders` directly. For
+the Connections panels, the parent component owns the providers array
+and exposes a granular `onDeleted(id)` callback. Cleaner separation:
+the dialog does not know how the list is stored, only which row it
+removed. Same shape adopted by EditConnectionDialog (`onUpdated`).
+
+### ConnectionsList fetches /api/providers, not /api/config
+
+`/api/config`'s `modelProviders` field is populated by spreading the
+already-empty `configManager.getCurrentConfig().modelProviders` (the
+field was emptied during Phase 1's migration backfill out of
+config.json). The intent of that endpoint was to merge live model
+lists into a pre-existing array, but the array has been empty since
+Phase 1, so the merge is a no-op. Pulling directly from
+`/api/providers` (Phase 4 endpoint) sidesteps the bug entirely and
+gives us a payload that already carries `scope` per row. The bug in
+the existing Models section is pre-existing and not Phase 6's to
+fix; flagged separately.
+
+### Sections list is admin-filtered at render time via useMemo
+
+`allSections` is declared at module scope so the order is stable and
+visible at a glance. The visible-sections list is computed inside the
+component via useMemo over `isAdmin`. This lets the dialog react to
+`/api/me` resolving after first render (the cached Promise hook can
+return null on the first paint and then re-render with the resolved
+user) without a hard reload. A `useEffect` snaps `activeSection` back
+to a valid key if admin status changes after the dialog mounts.
+
+### Empty state has an "Open Models settings" button, not just text
+
+The locked decision said the empty state should link or scroll to the
+existing AddProviderDialog flow rather than duplicate it. Implemented
+via a new `onNavigate` prop drilled down from `SettingsDialogue`:
+clicking the button calls `setActiveSection('models')` which is the
+same handler the nav buttons use. The existing Preferences /
+Personalization / Models / Search sections silently receive the new
+prop and ignore it; they're typed as `any` at the dispatch site.
+
+### Section order: Personal Connections before Instance Connections, both after Models
+
+The plan asked for "after the existing Models section". Personal sits
+just after Models so a non-admin user sees a natural progression from
+the general browse view to their own management view. Instance
+follows Personal because admins typically manage their own personal
+credentials more often than instance-shared ones, even though the
+admin-only flag makes Instance the more privileged section.
+
+### dataAdd: 'modelProviders' on both new sections
+
+The existing `SettingsDialogue` passes `config.fields[dataAdd]` and
+`config.values[dataAdd]` to each section component. The Connections
+panels need the field metadata (for the Edit dialog's form rendering)
+but not the values (they fetch fresh from /api/providers). Reusing
+`modelProviders` as the `dataAdd` key gives the panels the field
+metadata without introducing new config-endpoint shape. The `values`
+prop is declared in the component signature but unused.
+
+### Verification
+
+`yarn build` clean. `rg "providers/.*?/secret" src/` returns two hits
+in the Connections panel (RevealSecretDialog + EditConnectionDialog),
+both calling the Phase 4 endpoint. Manual component-tree trace:
+- Personal panel always renders in the section nav.
+- Instance panel renders only when `useCurrentUser().isAdmin === true`,
+  filtered via the useMemo above the JSX.
+- Reveal modal fetches the secret on open, renders each config field
+  with a per-field copy-to-clipboard button.
+- Edit modal fetches the secret on open, pre-populates the form,
+  PATCHes /api/providers/[id] on submit.
+- Delete modal does a hard confirmation step, then DELETEs, then
+  invokes the parent callback to drop the row.
+
