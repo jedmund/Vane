@@ -4,6 +4,11 @@ import SessionManager from '@/lib/session';
 import { ChatTurnMessage } from '@/lib/types';
 import { SearchSources } from '@/lib/agents/search/types';
 import APISearchAgent from '@/lib/agents/search/api';
+import {
+  getCurrentUserId,
+  MissingUserIdHeaderError,
+  missingUserIdResponse,
+} from '@/lib/db/scoped';
 
 interface ChatRequestBody {
   optimizationMode: 'speed' | 'balanced' | 'quality';
@@ -18,6 +23,7 @@ interface ChatRequestBody {
 
 export const POST = async (req: Request) => {
   try {
+    const userId = getCurrentUserId(req);
     const body: ChatRequestBody = await req.json();
 
     if (!body.sources || !body.query) {
@@ -47,7 +53,7 @@ export const POST = async (req: Request) => {
         : { role: 'assistant', content: msg[1] };
     });
 
-    const session = SessionManager.createSession();
+    const session = SessionManager.createSession(userId);
 
     const agent = new APISearchAgent();
 
@@ -199,6 +205,7 @@ export const POST = async (req: Request) => {
       },
     });
   } catch (err: any) {
+    if (err instanceof MissingUserIdHeaderError) return missingUserIdResponse();
     console.error(`Error in getting search results: ${err.message}`);
     return Response.json(
       { message: 'An error has occurred.' },

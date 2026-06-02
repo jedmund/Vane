@@ -11,12 +11,17 @@ if (process.env.NODE_ENV !== 'production') {
 class SessionManager {
   private static sessions: Map<string, SessionManager> = sessions;
   readonly id: string;
+  // Owner of the chat-stream session. /api/reconnect/[id] asserts the
+  // current user matches this before subscribing, so session ids cannot
+  // be used as a side-channel to read another user's in-progress stream.
+  readonly userId: string;
   private blocks = new Map<string, Block>();
   private events: { event: string; data: any }[] = [];
   private emitter = new EventEmitter();
   private TTL_MS = 30 * 60 * 1000;
 
-  constructor(id?: string) {
+  constructor(userId: string, id?: string) {
+    this.userId = userId;
     this.id = id ?? crypto.randomUUID();
 
     setTimeout(() => {
@@ -32,8 +37,8 @@ class SessionManager {
     return Array.from(this.sessions.values());
   }
 
-  static createSession(): SessionManager {
-    const session = new SessionManager();
+  static createSession(userId: string): SessionManager {
+    const session = new SessionManager(userId);
     this.sessions.set(session.id, session);
     return session;
   }
