@@ -660,3 +660,77 @@ the access-control plumbing in Phase 4. Encryption at rest is out of
 scope per the plan; the blob is plaintext but at least the column
 type is explicit about being a serialised payload, not structured
 data.
+
+---
+
+## Phase 2: admin assignment + auth helpers (impl agent, finished by orchestrator)
+
+Date: 2026-06-02
+
+The Phase 2 agent ran out of Anthropic API credits between Commit 1
+(helpers) and Commit 2 (the upsertUserFromOIDC change). The
+orchestrator picked up the in-flight users.ts edit (which the agent
+had completed before crashing), verified yarn build clean, and
+finished the remaining commits. No code from the agent was rejected;
+this is a bookkeeping note rather than a code decision.
+
+### isAdmin is set ONLY at user creation, not on returning-user refresh
+
+The simpler alternative is to re-evaluate the rules every time
+upsertUserFromOIDC runs on a returning user. We chose not to do that.
+
+- Operator surprise: if OIDC_ADMIN_EMAILS is edited (e.g. a typo, or
+  temporary admin rotation), every login would silently flip people
+  in or out of admin. Today the operator sees the promotion log line
+  exactly once at creation; isAdmin is stable thereafter.
+- The bootstrap "first real user" rule should fire exactly once per
+  deploy. Re-evaluating on every login means the moment any real
+  admin is removed, the next person to log in becomes admin. Not
+  what we want; admin removal should not trigger unintended
+  succession.
+- Manual promotion / demotion is explicit out-of-scope per the plan.
+  A future admin UI would set isAdmin directly rather than fight
+  the upsert path.
+
+### "First real user" check excludes id='legacy'
+
+Phase 1's migration sets isAdmin=1 on the synthetic legacy user so
+the upgrade path for single-user homelabs is zero-config (instance
+providers backfilled from config.json show up as admin-owned). A
+naive "no admin exists" check would always return false because
+legacy already trips it, and the first real OIDC user would never
+be promoted. The check is explicit: WHERE isAdmin=1 AND id !=
+'legacy'. LEGACY_USER_ID is reused so any future change to the
+sentinel id flows through one place.
+
+### Allowlist parsed per upsert, not at module load
+
+parseAdminEmailAllowlist() reads process.env.OIDC_ADMIN_EMAILS on
+every upsert rather than caching at module-load. The cost is one
+env read per OIDC login (negligible). The benefit is operators can
+update the env via a compose-level reload that swaps the running
+container's env without forcing us through a build cycle to refresh
+a module-scope constant.
+
+### Allowlist comparison is case-insensitive and trim()'d
+
+Emails are case-insensitive in practice. trim() covers the most
+common config error of trailing whitespace in
+OIDC_ADMIN_EMAILS=" justin@atelier.house ". Both happen on parse
+and on the email-being-checked before the includes() call so they
+cannot drift.
+
+### AdminRequiredError + adminRequiredResponse colocated in scoped.ts
+
+Same pattern as OwnershipError + ownershipErrorResponse from Phase 3
+of the OIDC epic. Routes that need admin gating import a single
+file. The canned response returns 403 with body
+{error: 'admin_required'}, distinct from 'forbidden' (cross-user)
+and 'unauthenticated' (no session). Three codes for three failure
+modes keeps the client side easy to special-case.
+
+### Phase 2 does not call requireAdmin from any route
+
+Per the plan: Phase 4 owns the route refactor. The helpers exist
+and are testable but no consumer code references them yet. Grep
+confirms: rg 'requireAdmin\b' src/app returns no matches.
