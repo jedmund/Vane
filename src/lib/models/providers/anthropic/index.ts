@@ -1,5 +1,4 @@
 import { UIConfigField } from '@/lib/config/types';
-import { getConfiguredModelProviderById } from '@/lib/config/serverRegistry';
 import { Model, ModelList, ProviderMetadata } from '../../types';
 import BaseEmbedding from '../../base/embedding';
 import BaseModelProvider from '../../base/provider';
@@ -24,10 +23,6 @@ const providerConfigFields: UIConfigField[] = [
 ];
 
 class AnthropicProvider extends BaseModelProvider<AnthropicConfig> {
-  constructor(id: string, name: string, config: AnthropicConfig) {
-    super(id, name, config);
-  }
-
   async getDefaultModels(): Promise<ModelList> {
     const res = await fetch('https://api.anthropic.com/v1/models?limit=999', {
       method: 'GET',
@@ -59,11 +54,10 @@ class AnthropicProvider extends BaseModelProvider<AnthropicConfig> {
 
   async getModelList(): Promise<ModelList> {
     const defaultModels = await this.getDefaultModels();
-    const configProvider = getConfiguredModelProviderById(this.id)!;
 
     return {
       embedding: [],
-      chat: [...defaultModels.chat, ...configProvider.chatModels],
+      chat: [...defaultModels.chat, ...this.chatModels],
     };
   }
 

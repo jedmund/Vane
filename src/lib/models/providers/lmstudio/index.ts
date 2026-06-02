@@ -1,5 +1,4 @@
 import { UIConfigField } from '@/lib/config/types';
-import { getConfiguredModelProviderById } from '@/lib/config/serverRegistry';
 import BaseModelProvider from '../../base/provider';
 import { Model, ModelList, ProviderMetadata } from '../../types';
 import LMStudioLLM from './lmstudioLLM';
@@ -25,10 +24,6 @@ const providerConfigFields: UIConfigField[] = [
 ];
 
 class LMStudioProvider extends BaseModelProvider<LMStudioConfig> {
-  constructor(id: string, name: string, config: LMStudioConfig) {
-    super(id, name, config);
-  }
-
   private normalizeBaseURL(url: string): string {
     const trimmed = url.trim().replace(/\/+$/, '');
     return trimmed.endsWith('/v1') ? trimmed : `${trimmed}/v1`;
@@ -71,14 +66,10 @@ class LMStudioProvider extends BaseModelProvider<LMStudioConfig> {
 
   async getModelList(): Promise<ModelList> {
     const defaultModels = await this.getDefaultModels();
-    const configProvider = getConfiguredModelProviderById(this.id)!;
 
     return {
-      embedding: [
-        ...defaultModels.embedding,
-        ...configProvider.embeddingModels,
-      ],
-      chat: [...defaultModels.chat, ...configProvider.chatModels],
+      embedding: [...defaultModels.embedding, ...this.embeddingModels],
+      chat: [...defaultModels.chat, ...this.chatModels],
     };
   }
 

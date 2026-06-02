@@ -1,9 +1,15 @@
 import { NextResponse } from 'next/server';
 import ModelRegistry from '@/lib/models/registry';
 import UploadManager from '@/lib/uploads/manager';
+import {
+  getCurrentUserId,
+  MissingUserIdHeaderError,
+  missingUserIdResponse,
+} from '@/lib/db/scoped';
 
 export async function POST(req: Request) {
   try {
+    const userId = getCurrentUserId(req);
     const formData = await req.formData();
 
     const files = formData.getAll('files') as File[];
@@ -17,7 +23,7 @@ export async function POST(req: Request) {
       );
     }
 
-    const registry = new ModelRegistry();
+    const registry = new ModelRegistry(userId);
 
     const model = await registry.loadEmbeddingModel(embeddingModelProvider, embeddingModel);
     
@@ -31,6 +37,7 @@ export async function POST(req: Request) {
       files: processedFiles,
     });
   } catch (error) {
+    if (error instanceof MissingUserIdHeaderError) return missingUserIdResponse();
     console.error('Error uploading file:', error);
     return NextResponse.json(
       { message: 'An error has occurred.' },

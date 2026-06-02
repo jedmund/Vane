@@ -1,6 +1,11 @@
 import handleVideoSearch from '@/lib/agents/media/video';
 import ModelRegistry from '@/lib/models/registry';
 import { ModelWithProvider } from '@/lib/models/types';
+import {
+  getCurrentUserId,
+  MissingUserIdHeaderError,
+  missingUserIdResponse,
+} from '@/lib/db/scoped';
 
 interface VideoSearchBody {
   query: string;
@@ -10,9 +15,10 @@ interface VideoSearchBody {
 
 export const POST = async (req: Request) => {
   try {
+    const userId = getCurrentUserId(req);
     const body: VideoSearchBody = await req.json();
 
-    const registry = new ModelRegistry();
+    const registry = new ModelRegistry(userId);
 
     const llm = await registry.loadChatModel(
       body.chatModel.providerId,
@@ -32,6 +38,7 @@ export const POST = async (req: Request) => {
 
     return Response.json({ videos }, { status: 200 });
   } catch (err) {
+    if (err instanceof MissingUserIdHeaderError) return missingUserIdResponse();
     console.error(`An error occurred while searching videos: ${err}`);
     return Response.json(
       { message: 'An error occurred while searching videos' },

@@ -1,5 +1,4 @@
 import { UIConfigField } from '@/lib/config/types';
-import { getConfiguredModelProviderById } from '@/lib/config/serverRegistry';
 import BaseModelProvider from '../../base/provider';
 import { Model, ModelList, ProviderMetadata } from '../../types';
 import BaseLLM from '../../base/llm';
@@ -27,10 +26,6 @@ const providerConfigFields: UIConfigField[] = [
 ];
 
 class OllamaProvider extends BaseModelProvider<OllamaConfig> {
-  constructor(id: string, name: string, config: OllamaConfig) {
-    super(id, name, config);
-  }
-
   async getDefaultModels(): Promise<ModelList> {
     try {
       const res = await fetch(`${this.config.baseURL}/api/tags`, {
@@ -66,14 +61,10 @@ class OllamaProvider extends BaseModelProvider<OllamaConfig> {
 
   async getModelList(): Promise<ModelList> {
     const defaultModels = await this.getDefaultModels();
-    const configProvider = getConfiguredModelProviderById(this.id)!;
 
     return {
-      embedding: [
-        ...defaultModels.embedding,
-        ...configProvider.embeddingModels,
-      ],
-      chat: [...defaultModels.chat, ...configProvider.chatModels],
+      embedding: [...defaultModels.embedding, ...this.embeddingModels],
+      chat: [...defaultModels.chat, ...this.chatModels],
     };
   }
 
