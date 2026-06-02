@@ -21,10 +21,19 @@ export interface AppUser {
 function parseAdminEmailAllowlist(): string[] {
   const raw = process.env.OIDC_ADMIN_EMAILS;
   if (!raw) return [];
-  return raw
+  const parsed = raw
     .split(',')
     .map((entry) => entry.trim().toLowerCase())
     .filter((entry) => entry.length > 0);
+  // Operator set the env to something truthy but it parses to nothing
+  // (commas only, whitespace, stray punctuation). Almost certainly a typo;
+  // warn instead of silently behaving like the env was unset.
+  if (parsed.length === 0) {
+    console.warn(
+      '[auth] OIDC_ADMIN_EMAILS is set but parsed to an empty list; check for a typo',
+    );
+  }
+  return parsed;
 }
 
 // "A real admin is set up." The legacy synthetic user is admin by design
