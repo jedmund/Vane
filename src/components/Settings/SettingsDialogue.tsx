@@ -2,15 +2,17 @@ import { Dialog, DialogPanel } from '@headlessui/react';
 import {
   ArrowLeft,
   BrainCog,
+  Building2,
   ChevronLeft,
   ExternalLink,
   Search,
   Sliders,
   ToggleRight,
+  User,
 } from 'lucide-react';
 import Preferences from './Sections/Preferences';
 import { motion } from 'framer-motion';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { toast } from 'sonner';
 import Loader from '../ui/Loader';
 import { cn } from '@/lib/utils';
@@ -18,8 +20,26 @@ import Models from './Sections/Models/Section';
 import SearchSection from './Sections/Search';
 import Select from '@/components/ui/Select';
 import Personalization from './Sections/Personalization';
+import PersonalConnections from './Sections/Connections/PersonalConnections';
+import InstanceConnections from './Sections/Connections/InstanceConnections';
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser';
 
-const sections = [
+type SettingsSection = {
+  key: string;
+  name: string;
+  description: string;
+  icon: typeof Sliders;
+  component: any;
+  dataAdd: string;
+  adminOnly?: boolean;
+};
+
+// Section order: keep Preferences / Personalization / Models / Search where
+// users already expect them, then append the management-oriented Connection
+// panels at the end. Instance Connections is filtered out for non-admins
+// inside the component below; it stays in the master list so the admin
+// view only differs by visibility, not by section order.
+const allSections: SettingsSection[] = [
   {
     key: 'preferences',
     name: 'Preferences',
@@ -52,6 +72,23 @@ const sections = [
     component: SearchSection,
     dataAdd: 'search',
   },
+  {
+    key: 'personal-connections',
+    name: 'Personal Connections',
+    description: 'Manage the AI connections only you can see.',
+    icon: User,
+    component: PersonalConnections,
+    dataAdd: 'modelProviders',
+  },
+  {
+    key: 'instance-connections',
+    name: 'Instance Connections',
+    description: 'Manage the shared AI connections every user can see.',
+    icon: Building2,
+    component: InstanceConnections,
+    dataAdd: 'modelProviders',
+    adminOnly: true,
+  },
 ];
 
 const SettingsDialogue = ({
@@ -63,12 +100,30 @@ const SettingsDialogue = ({
 }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [config, setConfig] = useState<any>(null);
-  const [activeSection, setActiveSection] = useState<string>(sections[0].key);
-  const [selectedSection, setSelectedSection] = useState(sections[0]);
+  const { user } = useCurrentUser();
+  const isAdmin = user?.isAdmin === true;
 
+  // Filter sections by admin status. Doing this in a memo (rather than at
+  // module scope) keeps the list reactive to /api/me resolving after first
+  // render, so admins do not have to refresh to see the Instance Connections
+  // entry on initial load.
+  const sections = useMemo(
+    () => allSections.filter((s) => !s.adminOnly || isAdmin),
+    [isAdmin],
+  );
+
+  const [activeSection, setActiveSection] = useState<string>(allSections[0].key);
+  const selectedSection =
+    sections.find((s) => s.key === activeSection) ?? sections[0];
+
+  // If the active section disappears because admin status flipped (e.g. the
+  // user data loaded after the initial render), snap back to a section that
+  // is still in the visible list.
   useEffect(() => {
-    setSelectedSection(sections.find((s) => s.key === activeSection)!);
-  }, [activeSection]);
+    if (!sections.find((s) => s.key === activeSection)) {
+      setActiveSection(sections[0].key);
+    }
+  }, [sections, activeSection]);
 
   useEffect(() => {
     if (isOpen) {
@@ -206,6 +261,7 @@ const SettingsDialogue = ({
                       <selectedSection.component
                         fields={config.fields[selectedSection.dataAdd]}
                         values={config.values[selectedSection.dataAdd]}
+                        onNavigate={setActiveSection}
                       />
                     </div>
                   </div>
