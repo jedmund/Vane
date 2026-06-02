@@ -7,6 +7,7 @@ import { toast } from 'sonner';
 import AddModel from './AddModelDialog';
 import UpdateProvider from './UpdateProviderDialog';
 import DeleteProvider from './DeleteProviderDialog';
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser';
 
 const ModelProvider = ({
   modelProvider,
@@ -18,6 +19,15 @@ const ModelProvider = ({
   setProviders: React.Dispatch<React.SetStateAction<ConfigModelProvider[]>>;
 }) => {
   const [open, setOpen] = useState(true);
+  const { user } = useCurrentUser();
+
+  // Scope is supplied by /api/providers (Phase 4). Older payloads that lack
+  // it are treated as personal: the list endpoint only returns instance rows
+  // plus the caller's own personal rows, so an unknown-scope row is always
+  // one the caller is allowed to touch.
+  const scope: 'instance' | 'personal' = modelProvider.scope ?? 'personal';
+  const isAdmin = user?.isAdmin === true;
+  const canMutate = isAdmin || scope === 'personal';
 
   const handleModelDelete = async (
     type: 'chat' | 'embedding',
@@ -84,9 +94,25 @@ const ModelProvider = ({
             <Plug2 size={14} className="text-sky-500" />
           </div>
           <div className="flex flex-col">
-            <p className="text-sm lg:text-sm text-black dark:text-white font-medium">
-              {modelProvider.name}
-            </p>
+            <div className="flex flex-row items-center gap-2">
+              <p className="text-sm lg:text-sm text-black dark:text-white font-medium">
+                {modelProvider.name}
+              </p>
+              {/* Scope badge sits next to the name so the row immediately reads
+                  as instance- or personal-owned without an extra click. The
+                  Instance badge is muted because it is meta information about
+                  who manages the row, not a status the user needs to act on. */}
+              <span
+                className={cn(
+                  'text-[9px] lg:text-[10px] font-medium uppercase tracking-wide px-1.5 py-0.5 rounded',
+                  scope === 'instance'
+                    ? 'bg-light-200 dark:bg-dark-200 text-black/60 dark:text-white/60'
+                    : 'bg-sky-500/10 dark:bg-sky-500/15 text-sky-600 dark:text-sky-400',
+                )}
+              >
+                {scope === 'instance' ? 'Instance' : 'Personal'}
+              </span>
+            </div>
             {modelCount > 0 && (
               <p className="text-[10px] lg:text-[11px] text-black/50 dark:text-white/50">
                 {modelCount} model{modelCount !== 1 ? 's' : ''} configured
@@ -94,17 +120,19 @@ const ModelProvider = ({
             )}
           </div>
         </div>
-        <div className="flex flex-row items-center gap-1">
-          <UpdateProvider
-            fields={fields}
-            modelProvider={modelProvider}
-            setProviders={setProviders}
-          />
-          <DeleteProvider
-            modelProvider={modelProvider}
-            setProviders={setProviders}
-          />
-        </div>
+        {canMutate && (
+          <div className="flex flex-row items-center gap-1">
+            <UpdateProvider
+              fields={fields}
+              modelProvider={modelProvider}
+              setProviders={setProviders}
+            />
+            <DeleteProvider
+              modelProvider={modelProvider}
+              setProviders={setProviders}
+            />
+          </div>
+        )}
       </div>
       <div className="flex flex-col gap-y-4 px-5 py-4">
         <div className="flex flex-col gap-y-2">
@@ -112,13 +140,14 @@ const ModelProvider = ({
             <p className="text-[11px] lg:text-[11px] font-medium text-black/70 dark:text-white/70 uppercase tracking-wide">
               Chat Models
             </p>
-            {!modelProvider.chatModels.some((m) => m.key === 'error') && (
-              <AddModel
-                providerId={modelProvider.id}
-                setProviders={setProviders}
-                type="chat"
-              />
-            )}
+            {canMutate &&
+              !modelProvider.chatModels.some((m) => m.key === 'error') && (
+                <AddModel
+                  providerId={modelProvider.id}
+                  setProviders={setProviders}
+                  type="chat"
+                />
+              )}
           </div>
           <div className="flex flex-col gap-2">
             {modelProvider.chatModels.some((m) => m.key === 'error') ? (
@@ -147,14 +176,16 @@ const ModelProvider = ({
                     className="flex flex-row items-center space-x-1.5 text-xs lg:text-xs text-black/70 dark:text-white/70 rounded-lg bg-light-secondary dark:bg-dark-secondary px-3 py-1.5 border border-light-200 dark:border-dark-200"
                   >
                     <span>{model.name}</span>
-                    <button
-                      onClick={() => {
-                        handleModelDelete('chat', model.key);
-                      }}
-                      className="hover:text-red-500 dark:hover:text-red-400 transition-colors"
-                    >
-                      <X size={12} />
-                    </button>
+                    {canMutate && (
+                      <button
+                        onClick={() => {
+                          handleModelDelete('chat', model.key);
+                        }}
+                        className="hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
@@ -167,13 +198,14 @@ const ModelProvider = ({
             <p className="text-[11px] lg:text-[11px] font-medium text-black/70 dark:text-white/70 uppercase tracking-wide">
               Embedding Models
             </p>
-            {!modelProvider.embeddingModels.some((m) => m.key === 'error') && (
-              <AddModel
-                providerId={modelProvider.id}
-                setProviders={setProviders}
-                type="embedding"
-              />
-            )}
+            {canMutate &&
+              !modelProvider.embeddingModels.some((m) => m.key === 'error') && (
+                <AddModel
+                  providerId={modelProvider.id}
+                  setProviders={setProviders}
+                  type="embedding"
+                />
+              )}
           </div>
           <div className="flex flex-col gap-2">
             {modelProvider.embeddingModels.some((m) => m.key === 'error') ? (
@@ -202,14 +234,16 @@ const ModelProvider = ({
                     className="flex flex-row items-center space-x-1.5 text-xs lg:text-xs text-black/70 dark:text-white/70 rounded-lg bg-light-secondary dark:bg-dark-secondary px-3 py-1.5 border border-light-200 dark:border-dark-200"
                   >
                     <span>{model.name}</span>
-                    <button
-                      onClick={() => {
-                        handleModelDelete('embedding', model.key);
-                      }}
-                      className="hover:text-red-500 dark:hover:text-red-400 transition-colors"
-                    >
-                      <X size={12} />
-                    </button>
+                    {canMutate && (
+                      <button
+                        onClick={() => {
+                          handleModelDelete('embedding', model.key);
+                        }}
+                        className="hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                      >
+                        <X size={12} />
+                      </button>
+                    )}
                   </div>
                 ))}
               </div>
