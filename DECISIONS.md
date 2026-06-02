@@ -881,3 +881,126 @@ list. Constructing with userId 'legacy' returned the same provider,
 confirming the instance visibility rule. The on-disk cleanup helper
 ran twice in sequence; the first invocation removed the key, the
 second was a no-op. yarn build was clean after each commit.
+
+---
+
+## Phase 4: scope-aware /api/providers routes (impl agent)
+
+Date: 2026-06-01
+
+### Direct DB writes from route handlers, no registry mutation path
+
+ModelRegistry's Phase 3 mutation stubs (addProvider, updateProvider,
+removeProvider, addProviderModel, removeProviderModel) and
+configManager's matching methods are removed outright rather than
+rewritten. New CRUD helpers in src/lib/db/providers.ts (createProvider,
+updateProviderRow, deleteProviderRow, getProviderById,
+canUserSeeProvider, canUserMutateProvider) handle the writes, and the
+/api/providers route handlers call them directly. Routing writes
+through the registry would re-create the pre-Phase 1 pattern of
+access control being diffuse across layers; keeping the route as the
+single source of truth for ownership/admin checks makes the gate
+trivially auditable in code review.
+
+### 403 not 404 for cross-user provider id access
+
+Matches the Phase 3 chats precedent: when the id exists but the
+caller cannot see it, return 403. The plan text initially called this
+out as 404 in one spot; the locked decision (and what shipped) is 403
+to avoid leaking the existence of a provider id that belongs to
+another user. A true 404 is returned only when the id does not exist
+anywhere in the table.
+
+### Two distinct 403 bodies: ownership vs admin_required
+
+When a non-admin tries to mutate an instance row, the response is
+adminRequiredResponse ({error: 'admin_required'}). When a non-admin
+tries to mutate someone else's personal row, the response is
+ownershipErrorResponse ({error: 'forbidden'}). Both are 403 with the
+same HTTP semantics; only the body differs so the frontend can render
+"This is an admin-managed connection" vs "This is another user's
+connection" without a second roundtrip. Server-side log scraping
+benefits too: an admin_required spike is a signal that a non-admin is
+hitting admin-only paths repeatedly, which is a different operator
+concern from cross-user probing.
+
+### Visibility predicate is OR-of-rules, mutation predicate is AND-stricter
+
+canUserSeeProvider returns true if the row is instance-scope OR the
+caller is admin OR the caller owns the row. canUserMutateProvider
+drops the first clause: instance-scope rows require admin to mutate
+even though every user can see them. The asymmetry is the whole point
+of the admin/user split, so it lives in two predicates rather than
+being reconstructed inline at every call site.
+
+### Secret endpoint visibility is narrower than list endpoint
+
+/api/providers/[id]/secret returns 403 to non-admin non-owners even
+for instance rows. The list endpoint hides the api_key in its response
+shape, so a non-admin user can see "the OpenAI instance connection
+exists" without seeing the api_key. The secret endpoint exists for
+edit flows; admins get the full payload (for editing any row), owners
+get the full payload (for editing their own). Instance visibility
+does NOT grant secret-read access because that would let every
+authenticated user read the shared admin-managed api_key, which
+defeats the purpose of an admin scope.
+
+### Type is immutable at PATCH; idempotent model add
+
+The PATCH route does not accept a `type` field; callers wanting a
+different provider type delete and recreate. Two reasons: the type
+determines which Provider subclass parses the config blob, so a type
+swap with a stale config would either crash on load or silently
+ignore valid fields; and the only operator who would legitimately
+want to "change type" is hand-fixing a typo, which is rare enough
+that delete-and-recreate is fine.
+
+The POST on /api/providers/[id]/models is idempotent on the model
+`key`: re-POSTing the same key replaces the previous entry rather
+than appending a duplicate. The previous flow (via configManager)
+deduped at write time; preserving that behavior avoids surprising the
+frontend on retries.
+
+### chats has no providerId FK; no cascading delete needed
+
+src/lib/db/schema.ts shows the chats table has no foreign key to
+providers. Provider DELETE therefore cannot orphan a chat at the
+schema level. Chat messages reference providers implicitly through
+backendId fields stored inside the messages.responseBlocks JSON, but
+those are content (the model that generated each block); deleting a
+provider does not invalidate the historical content, it just means
+the chat cannot be continued without configuring a new provider. No
+cascade is implemented and none is required. If a future schema adds
+chats.providerId we will need to revisit this decision; for now the
+delete path is purely a single-row DELETE on providers.
+
+### MinimalProvider gets optional type + scope fields
+
+Adding required fields would break any direct consumer of the type
+(at least one usage in src/lib/hooks/useChat.tsx). Marking them
+optional lets the GET /api/providers response carry the new metadata
+without churning callers that build a MinimalProvider locally. The
+registry always populates both fields when shaping the response, so
+in practice every wire payload has them.
+
+### Unknown provider type returns 400 on POST, not stored
+
+The POST handler validates that body.type is a known key in the
+providers map before inserting. The plan text did not call this out,
+but storing an unknown type would create a permanently broken row
+(every read attempt would hit the "Invalid provider type" branch in
+the registry and silently skip it). Failing fast at write time
+matches the parseAndValidate pattern the existing provider classes
+already use for config validation.
+
+### Verification
+
+`yarn build` clean across all six commits. Verification greps from
+the orchestrator brief all return the expected results: no
+`addProvider`/`updateProvider`/`removeProvider`/`addProviderModel`/
+`removeProviderModel` references remain anywhere in src/; no
+`configManager.(add|update|remove)Provider*` references remain (only
+the unrelated `configManager.updateConfig` for generic config writes);
+`api_key` does not appear in src/app/api/providers/route.ts (the list
+response shape excludes it). The /api/providers/[id]/secret route is
+visible in the build output's route table.
