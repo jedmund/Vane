@@ -734,3 +734,150 @@ modes keeps the client side easy to special-case.
 Per the plan: Phase 4 owns the route refactor. The helpers exist
 and are testable but no consumer code references them yet. Grep
 confirms: rg 'requireAdmin\b' src/app returns no matches.
+
+---
+
+## Phase 3: ModelRegistry reads providers from DB (impl agent)
+
+Date: 2026-06-02
+
+### chatModels and embeddingModels split out of the config blob on read
+
+Phase 1's seed folded chatModels and embeddingModels into the providers
+row's config blob so the single TEXT column held the whole payload. The
+existing in-memory shape (ConfigModelProvider) had them as siblings of
+config, not inside it. We resolve the impedance mismatch on the read
+side: src/lib/db/providers.ts destructures them off the parsed blob and
+exposes them as sibling fields on the returned StoredProvider type.
+Callers (ModelRegistry, the provider classes) see them where they
+expect to. The on-disk row is left as-is so the migration code path is
+not coupled to the shape this commit cares about.
+
+Alternative considered: leave them folded and refactor every consumer to
+read from config.chatModels / config.embeddingModels. Rejected because
+the leak surface for api_key in the config blob is exactly the consumer
+set; pulling models out at the boundary keeps every consumer accessing a
+clean models field with no temptation to dump the whole blob.
+
+### BaseModelProvider gains chatModels / embeddingModels as protected fields
+
+Each subclass used to look itself up by id via
+getConfiguredModelProviderById to fetch its own chatModels list. With
+the DB as source of truth that lookup would have to take a userId and
+re-query for every getModelList call, which is wasteful and re-creates
+the visibility filter at a layer that should not own it. We hoist the
+lookup once into the registry, which passes the resolved arrays through
+the constructor to the base class.
+
+The subclasses' redundant explicit constructors (each was just calling
+super(id, name, config)) are removed; the base class signature with
+default empty arrays covers them. Type-narrowed config types are
+preserved because the subclasses still parameterise
+BaseModelProvider<CONFIG>.
+
+### Registry mutation methods are stubs that throw
+
+ModelRegistry.addProvider / updateProvider / removeProvider /
+addProviderModel / removeProviderModel all throw with a message
+naming Phase 4 as the rewrite target. The original implementations
+delegated to configManager which in turn wrote to config.json; both
+those paths are gone now (configManager's matching methods also throw).
+Stubbing rather than silently no-oping means the /api/providers POST /
+PATCH / DELETE routes (which Phase 4 owns) get a loud error if anyone
+exercises them before Phase 4 lands, rather than a 200 that pretends
+the write succeeded.
+
+The frontend currently does call these routes (Settings dialog "Add
+Provider" et al.). They were already broken in Phase 1 from the moment
+config.json stopped being the source of truth for reads; Phase 3 makes
+the failure mode explicit rather than letting writes silently land in
+a file that nothing reads anymore.
+
+### serverRegistry.ts reduced to a SearXNG shim
+
+getConfiguredModelProviders / getConfiguredModelProviderById are gone.
+getSearxngURL stays because the SearXNG URL is a global server setting
+that lives in data/config.json (it has no per-user concept) and is
+unrelated to the providers refactor. The file is one line plus a
+comment now; we keep it instead of moving the function elsewhere so
+the existing src/lib/searxng.ts import path stays valid without
+churning a separate file move.
+
+### Config.modelProviders kept as optional on the type
+
+Removing the field from the Config type would break unrelated
+consumers (SetupConfig.tsx, AddProviderDialog.tsx, the /api/config GET
+handler, ConfigManager.getCurrentConfig()'s consumers in general).
+Marking it optional keeps types compiling while signalling the
+deprecation. The /api/config GET handler still surfaces a populated
+modelProviders field on the wire by building it from the DB via
+ModelRegistry.getActiveProviders, so frontends that depend on that
+payload continue to work.
+
+### On-disk config.json cleanup runs from instrumentation, not lazily
+
+src/lib/config/cleanup.ts ships a one-shot stripStaleModelProvidersKey
+helper invoked from src/instrumentation.ts, AFTER the migration runner
+and BEFORE the configManager import. Order matters: configManager
+reads config.json into memory on import, so the cleanup has to land
+first or the in-memory copy will briefly hold a key the on-disk file
+no longer has (or vice versa).
+
+The helper is idempotent: it reads, checks for the key, deletes if
+present, writes back. A second invocation finds no key and returns
+early. Tolerant of corrupt JSON (leaves it for ConfigManager's own
+initializer to handle, rather than piling on a second rewrite) and
+missing files (no-op).
+
+Partial-state file question: what if a future binary runs that still
+writes modelProviders to config.json after this PR has removed it?
+The cleanup will just strip it again on the next boot. The cost is
+one extra fsync per boot in the (impossible after this PR) case where
+modelProviders is somehow back in the file. Cheap, safe, idempotent.
+
+### Corrupt provider rows are skipped with a warning, not thrown
+
+src/lib/db/providers.ts wraps JSON.parse in try/catch. A row whose
+config blob fails to parse is dropped from the returned list with a
+console.warn. The alternative (throw and fail the whole list) was
+rejected because one bad row would lock the user out of every
+provider including healthy ones, which is the wrong failure mode for
+an operator who hand-edited the DB or hit a partial write. The
+warning is loud enough that the row will get noticed at the next
+investigation.
+
+### Sync read intentionally, no async wrapper
+
+better-sqlite3 is synchronous and the ModelRegistry constructor needs
+to populate activeProviders without awaiting (the prompt locked
+"constructor takes a userId"). getProvidersForUser uses drizzle's
+.all() in sync mode, which matches the existing migrate.ts pattern.
+Phase 4's route handlers can wrap it in async with no transformation
+cost.
+
+Considered exposing both sync and async variants. Rejected because
+the only consumer that benefits from async would be a non-existent
+one (every existing call site is fine with sync).
+
+### Visibility filter is WHERE userId IS NULL OR userId = ?
+
+Phase 1's seed used userId = NULL for instance providers (verified by
+SELECT on the local DB: the single backfilled row has userId IS
+NULL). The plan called this out as the desired shape, and the
+implementation matches. No special-casing for 'legacy' is needed in
+the visibility filter because legacy is just another user id and any
+providers created by the legacy user would correctly be visible only
+to legacy. The instance providers are NULL-owned, visible to all.
+
+### Verified by running the migration and constructing a registry
+
+The local dev DB had migrations 0000..0003 applied. Running the
+migration runner from this branch picked up 0004 cleanly, seeded one
+instance provider from data/config.json (transformers, the only entry
+present), and stamped the ran_migrations row. Constructing
+new ModelRegistry('test-user-id') and calling getActiveProviders
+returned the seeded provider with its full default embedding model
+list. Constructing with userId 'legacy' returned the same provider,
+confirming the instance visibility rule. The on-disk cleanup helper
+ran twice in sequence; the first invocation removed the key, the
+second was a no-op. yarn build was clean after each commit.
