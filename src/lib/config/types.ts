@@ -68,6 +68,8 @@ type ConfigModelProvider = {
 
 type Config = {
   version: number;
+  // Kept on the type so existing config.json files deserialize without
+  // schema errors; Phase 7 removed every code path that reads it.
   setupComplete: boolean;
   preferences: {
     [key: string]: any;
