@@ -95,14 +95,34 @@ export async function upsertUserFromOIDC(
 
   const id = ulid();
   const createdAt = new Date().toISOString();
-  await db.insert(users).values({
-    id,
-    sub,
-    email,
-    name,
-    createdAt,
-    isAdmin,
-  });
+  try {
+    await db.insert(users).values({
+      id,
+      sub,
+      email,
+      name,
+      createdAt,
+      isAdmin,
+    });
+  } catch (err) {
+    // Two concurrent first-time logins for the same `sub` race past the
+    // initial SELECT and both reach this INSERT. The users.sub UNIQUE
+    // index catches the loser; better-sqlite3 surfaces it as
+    // SQLITE_CONSTRAINT_UNIQUE. Re-run the SELECT and return the row the
+    // winner inserted instead of propagating a 500 to the user.
+    const code = (err as { code?: string } | null)?.code;
+    if (code === 'SQLITE_CONSTRAINT_UNIQUE') {
+      const winner = await db
+        .select()
+        .from(users)
+        .where(eq(users.sub, sub))
+        .limit(1);
+      if (winner.length > 0) {
+        return winner[0] as AppUser;
+      }
+    }
+    throw err;
+  }
 
   if (isAdmin) {
     const reason = allowlisted
