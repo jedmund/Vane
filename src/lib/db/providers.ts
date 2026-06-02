@@ -25,7 +25,26 @@ export type StoredProvider = {
 // crashing the read path. A corrupt blob is almost certainly an operator
 // error (hand-edited db, partial write); failing the whole list because of
 // one bad row would lock the user out of every provider including healthy
-// ones. The warning is loud enough that the row will get noticed.
+// ones. The warning is loud enough that the row will get noticed, and the
+// row is then deleted so the warning fires once instead of on every read.
+function deleteCorruptRow(id: string, reason: string): void {
+  try {
+    const result = db
+      .delete(providersTable)
+      .where(eq(providersTable.id, id))
+      .run();
+    if (result.changes > 0) {
+      console.warn(
+        `providers: deleted corrupt row ${id} (${reason}); operator action may be needed to re-create it`,
+      );
+    }
+  } catch (err) {
+    // Best-effort: a deletion failure is not worth crashing the read path
+    // over. The warning above already told the operator something is off.
+    console.warn(`providers: failed to delete corrupt row ${id}:`, err);
+  }
+}
+
 function parseRow(row: {
   id: string;
   userId: string | null;
@@ -42,6 +61,7 @@ function parseRow(row: {
       `providers: skipping row ${row.id} (${row.name}) with unparseable config:`,
       err,
     );
+    deleteCorruptRow(row.id, 'unparseable config JSON');
     return null;
   }
 
@@ -49,6 +69,7 @@ function parseRow(row: {
     console.warn(
       `providers: skipping row ${row.id} (${row.name}) with non-object config`,
     );
+    deleteCorruptRow(row.id, 'non-object config');
     return null;
   }
 
