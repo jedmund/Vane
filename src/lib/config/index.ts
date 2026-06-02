@@ -13,9 +13,14 @@ class ConfigManager {
   // live in the SQLite providers table. The on-disk cleanup step that
   // strips a stale modelProviders key from existing config.json files runs
   // from src/lib/config/cleanup.ts at boot, before this manager reads.
+  // setupComplete is retained in the on-disk shape for backward compat with
+  // existing config.json files that carry the key, but Phase 7 removed every
+  // code path that reads it. Setup is unconditionally treated as complete;
+  // the presence or absence of providers is now signalled by an inline
+  // banner on the chat UI instead of a first-run modal.
   currentConfig: Config = {
     version: this.configVersion,
-    setupComplete: false,
+    setupComplete: true,
     preferences: {},
     personalization: {},
     search: {
@@ -233,18 +238,10 @@ class ConfigManager {
   // providers table and writes happen in the /api/providers route handlers
   // via src/lib/db/providers.ts; the config-json-based mutators were dead
   // weight after Phase 1 made the DB the source of truth.
-
-  public isSetupComplete() {
-    return this.currentConfig.setupComplete;
-  }
-
-  public markSetupComplete() {
-    if (!this.currentConfig.setupComplete) {
-      this.currentConfig.setupComplete = true;
-    }
-
-    this.saveConfig();
-  }
+  //
+  // isSetupComplete / markSetupComplete were removed in Phase 7 with the
+  // welcome flow. The `setupComplete` key still exists on Config so older
+  // config.json files round-trip without rewrite, but no code reads it.
 
   public getUIConfigSections(): UIConfigSections {
     return this.uiConfigSections;
