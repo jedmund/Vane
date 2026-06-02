@@ -5,7 +5,7 @@ import {
   DialogTitle,
 } from '@headlessui/react';
 import { Loader2, Plus } from 'lucide-react';
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import {
   ConfigModelProvider,
@@ -38,6 +38,18 @@ const AddProvider = ({
 
   const { user } = useCurrentUser();
   const isAdmin = user?.isAdmin === true;
+
+  // Reset form state when the dialog closes so the next open starts from
+  // defaults. Without this, scope sticks at whatever the admin last picked
+  // (surprising: default is Instance), and stale config from a previous
+  // type would survive until the user touches the type selector.
+  useEffect(() => {
+    if (open) return;
+    setSelectedProvider(modelProviders[0]?.key || null);
+    setConfig({});
+    setName('');
+    setScope('instance');
+  }, [open, modelProviders]);
 
   const providerConfigMap = useMemo(() => {
     const map: Record<string, { name: string; fields: UIConfigField[] }> = {};
