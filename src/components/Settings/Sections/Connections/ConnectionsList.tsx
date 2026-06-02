@@ -4,7 +4,7 @@ import {
   UIConfigField,
 } from '@/lib/config/types';
 import { cn } from '@/lib/utils';
-import { Loader2, Plug2 } from 'lucide-react';
+import { Loader2, Plug2, RotateCw } from 'lucide-react';
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { toast } from 'sonner';
 import RevealSecretDialog from './RevealSecretDialog';
@@ -35,6 +35,7 @@ const ConnectionsList = ({
     embeddingProviderId: string | null;
     embeddingModelKey: string | null;
   }>({ chatProviderId: null, chatModelKey: null, embeddingProviderId: null, embeddingModelKey: null });
+  const [syncingProvider, setSyncingProvider] = useState<string | null>(null);
 
   const fetchDefaults = useCallback(async () => {
     try {
@@ -100,6 +101,36 @@ const ConnectionsList = ({
   const handleDeleted = (id: string) => {
     setProviders((prev) => prev.filter((p) => p.id !== id));
   };
+
+  const handleSyncModels = async (providerId: string) => {
+    setSyncingProvider(providerId);
+    try {
+      const res = await fetch(`/api/providers/${providerId}/sync-models`, {
+        method: 'POST',
+      });
+      if (!res.ok) throw new Error('Failed to sync models');
+      const data = await res.json();
+      if (data.added > 0) {
+        toast.success(`${data.added} new model${data.added > 1 ? 's' : ''} synced.`);
+      } else {
+        toast.success('Models are up to date.');
+      }
+      // Refresh the full provider list to update the card state
+      const refresh = await fetch('/api/providers');
+      if (refresh.ok) {
+        const data: { providers?: ConfigModelProvider[] } = await refresh.json();
+        const all = data.providers ?? [];
+        setProviders(all.filter((p) => (p.scope ?? 'personal') === scope));
+      }
+    } catch (err) {
+      console.error('Error syncing models:', err);
+      toast.error('Failed to sync models.');
+    } finally {
+      setSyncingProvider(null);
+    }
+  };
+
+  const isSyncing = (providerId: string) => syncingProvider === providerId;
 
   if (loading) {
     return (
@@ -196,6 +227,18 @@ const ConnectionsList = ({
                     </button>
                   </SetDefaultDialog>
                 )}
+                <button
+                  type="button"
+                  onClick={() => handleSyncModels(provider.id)}
+                  disabled={isSyncing(provider.id)}
+                  className="p-1.5 rounded-md text-black/40 dark:text-white/40 hover:text-black/70 hover:dark:text-white/70 hover:bg-light-200 hover:dark:bg-dark-200 transition-colors disabled:opacity-50"
+                  title="Sync models from connection"
+                >
+                  <RotateCw
+                    size={14}
+                    className={isSyncing(provider.id) ? 'animate-spin' : ''}
+                  />
+                </button>
                 <RevealSecretDialog modelProvider={provider} />
                 <EditConnectionDialog
                   modelProvider={provider}
