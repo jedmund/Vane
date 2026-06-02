@@ -1,12 +1,13 @@
 import { UIConfigField, ConfigModelProvider } from '@/lib/config/types';
 import { cn } from '@/lib/utils';
 import { AnimatePresence, motion } from 'framer-motion';
-import { AlertCircle, Plug2, Plus, Pencil, Trash2, X } from 'lucide-react';
+import { AlertCircle, Plug2, Pencil, Trash2, X } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import AddModel from './AddModelDialog';
 import UpdateProvider from './UpdateProviderDialog';
 import DeleteProvider from './DeleteProviderDialog';
+import RenameModelDialog from './RenameModelDialog';
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser';
 
 const ModelProvider = ({
@@ -80,6 +81,33 @@ const ModelProvider = ({
     }
   };
 
+  const handleModelRenamed = (
+    type: 'chat' | 'embedding',
+    key: string,
+    newName: string,
+  ) => {
+    setProviders((prev) =>
+      prev.map((provider) => {
+        if (provider.id === modelProvider.id) {
+          const updateList = (models: typeof provider.chatModels) =>
+            models.map((m) => (m.key === key ? { ...m, name: newName } : m));
+          return {
+            ...provider,
+            chatModels:
+              type === 'chat'
+                ? updateList(provider.chatModels)
+                : provider.chatModels,
+            embeddingModels:
+              type === 'embedding'
+                ? updateList(provider.embeddingModels)
+                : provider.embeddingModels,
+          };
+        }
+        return provider;
+      }),
+    );
+  };
+
   const modelCount =
     modelProvider.chatModels.filter((m) => m.key !== 'error').length +
     modelProvider.embeddingModels.filter((m) => m.key !== 'error').length;
@@ -150,6 +178,7 @@ const ModelProvider = ({
                   providerId={modelProvider.id}
                   setProviders={setProviders}
                   type="chat"
+                  currentModels={modelProvider.chatModels}
                 />
               )}
           </div>
@@ -173,25 +202,34 @@ const ModelProvider = ({
               </div>
             ) : modelProvider.chatModels.filter((m) => m.key !== 'error')
                 .length > 0 ? (
-              <div className="flex flex-row flex-wrap gap-2">
-                {modelProvider.chatModels.map((model, index) => (
-                  <div
-                    key={`${modelProvider.id}-chat-${model.key}-${index}`}
-                    className="flex flex-row items-center space-x-1.5 text-xs lg:text-xs text-black/70 dark:text-white/70 rounded-lg bg-light-secondary dark:bg-dark-secondary px-3 py-1.5 border border-light-200 dark:border-dark-200"
-                  >
-                    <span>{model.name}</span>
-                    {canMutate && (
-                      <button
-                        onClick={() => {
-                          handleModelDelete('chat', model.key);
-                        }}
-                        className="hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                  <div className="flex flex-row flex-wrap gap-2">
+                    {modelProvider.chatModels.filter((m) => m.key !== 'error').map((model, index) => (
+                      <div
+                        key={`${modelProvider.id}-chat-${model.key}-${index}`}
+                        className="flex flex-row items-center space-x-1.5 text-xs lg:text-xs text-black/70 dark:text-white/70 rounded-lg bg-light-secondary dark:bg-dark-secondary px-3 py-1.5 border border-light-200 dark:border-dark-200"
                       >
-                        <X size={12} />
-                      </button>
-                    )}
-                  </div>
-                ))}
+                        <RenameModelDialog
+                          providerId={modelProvider.id}
+                          model={model}
+                          type="chat"
+                          onRenamed={(key, name) => handleModelRenamed('chat', key, name)}
+                        >
+                          <span className="cursor-pointer hover:text-black dark:hover:text-white transition-colors">
+                            {model.name}
+                          </span>
+                        </RenameModelDialog>
+                        {canMutate && (
+                          <button
+                            onClick={() => {
+                              handleModelDelete('chat', model.key);
+                            }}
+                            className="hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
               </div>
             ) : null}
           </div>
@@ -208,6 +246,7 @@ const ModelProvider = ({
                   providerId={modelProvider.id}
                   setProviders={setProviders}
                   type="embedding"
+                  currentModels={modelProvider.embeddingModels}
                 />
               )}
           </div>
@@ -231,25 +270,34 @@ const ModelProvider = ({
               </div>
             ) : modelProvider.embeddingModels.filter((m) => m.key !== 'error')
                 .length > 0 ? (
-              <div className="flex flex-row flex-wrap gap-2">
-                {modelProvider.embeddingModels.map((model, index) => (
-                  <div
-                    key={`${modelProvider.id}-embedding-${model.key}-${index}`}
-                    className="flex flex-row items-center space-x-1.5 text-xs lg:text-xs text-black/70 dark:text-white/70 rounded-lg bg-light-secondary dark:bg-dark-secondary px-3 py-1.5 border border-light-200 dark:border-dark-200"
-                  >
-                    <span>{model.name}</span>
-                    {canMutate && (
-                      <button
-                        onClick={() => {
-                          handleModelDelete('embedding', model.key);
-                        }}
-                        className="hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                  <div className="flex flex-row flex-wrap gap-2">
+                    {modelProvider.embeddingModels.filter((m) => m.key !== 'error').map((model, index) => (
+                      <div
+                        key={`${modelProvider.id}-embedding-${model.key}-${index}`}
+                        className="flex flex-row items-center space-x-1.5 text-xs lg:text-xs text-black/70 dark:text-white/70 rounded-lg bg-light-secondary dark:bg-dark-secondary px-3 py-1.5 border border-light-200 dark:border-dark-200"
                       >
-                        <X size={12} />
-                      </button>
-                    )}
-                  </div>
-                ))}
+                        <RenameModelDialog
+                          providerId={modelProvider.id}
+                          model={model}
+                          type="embedding"
+                          onRenamed={(key, name) => handleModelRenamed('embedding', key, name)}
+                        >
+                          <span className="cursor-pointer hover:text-black dark:hover:text-white transition-colors">
+                            {model.name}
+                          </span>
+                        </RenameModelDialog>
+                        {canMutate && (
+                          <button
+                            onClick={() => {
+                              handleModelDelete('embedding', model.key);
+                            }}
+                            className="hover:text-red-500 dark:hover:text-red-400 transition-colors"
+                          >
+                            <X size={12} />
+                          </button>
+                        )}
+                      </div>
+                    ))}
               </div>
             ) : null}
           </div>

@@ -10,6 +10,7 @@ import {
 } from '@/lib/db/scoped';
 import { createProvider } from '@/lib/db/providers';
 import { providers as providerClasses } from '@/lib/models/providers';
+import { loadDefaults } from '@/lib/db/settings';
 
 export const GET = async (req: Request) => {
   try {
@@ -29,6 +30,7 @@ export const GET = async (req: Request) => {
     return Response.json(
       {
         providers: filteredProviders,
+        defaults: loadDefaults(),
       },
       {
         status: 200,
