@@ -294,7 +294,22 @@ fs.readdirSync(migrationsFolder)
             );
             const now = new Date().toISOString();
 
-            providers.forEach((p: any) => {
+            providers.forEach((p: any, index: number) => {
+              // Fail loudly on malformed entries instead of storing a ghost
+              // row with type='unknown'. ModelRegistry can't construct a
+              // provider for an unknown type and would silently drop it,
+              // leaving the operator with a non-functional row visible only
+              // via direct DB inspection.
+              if (typeof p?.type !== 'string' || p.type.length === 0) {
+                throw new Error(
+                  `0004 seed: modelProviders[${index}] missing required field 'type'`,
+                );
+              }
+              if (typeof p?.name !== 'string' || p.name.length === 0) {
+                throw new Error(
+                  `0004 seed: modelProviders[${index}] (type=${p.type}) missing required field 'name'`,
+                );
+              }
               const cfgBlob = {
                 ...(p.config ?? {}),
                 chatModels: Array.isArray(p.chatModels) ? p.chatModels : [],
@@ -304,8 +319,8 @@ fs.readdirSync(migrationsFolder)
               };
               insertProvider.run(
                 ulid(),
-                p.type ?? 'unknown',
-                p.name ?? p.type ?? 'Unnamed',
+                p.type,
+                p.name,
                 JSON.stringify(cfgBlob),
                 now,
               );
