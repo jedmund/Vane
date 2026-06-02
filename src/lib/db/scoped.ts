@@ -1,6 +1,6 @@
 import { and, eq } from 'drizzle-orm';
 import db from '@/lib/db';
-import { chats } from '@/lib/db/schema';
+import { chats, users } from '@/lib/db/schema';
 
 // Single source of truth for per-user data scoping. Routes import these
 // helpers instead of building their own WHERE clauses; if a future query
@@ -30,6 +30,18 @@ export class OwnershipError extends Error {
   constructor(public readonly chatId: string) {
     super(`User does not own chat ${chatId}`);
     this.name = 'OwnershipError';
+  }
+}
+
+// Thrown by requireAdmin. Kept distinct from OwnershipError because the
+// semantics differ: ownership is "this resource is not yours", admin is
+// "this action is reserved for instance operators". A route may legitimately
+// want to surface the two as the same 403 to the client while logging them
+// differently server-side.
+export class AdminRequiredError extends Error {
+  constructor(public readonly userId: string) {
+    super(`User ${userId} is not an admin`);
+    this.name = 'AdminRequiredError';
   }
 }
 
@@ -67,9 +79,41 @@ export function ownershipErrorResponse() {
   return Response.json({ error: 'forbidden' }, { status: 403 });
 }
 
+// Distinct from ownershipErrorResponse so log scrapers and the client can
+// tell "not yours" from "admin only". Both are 403; only the body differs.
+export function adminRequiredResponse() {
+  return Response.json({ error: 'admin_required' }, { status: 403 });
+}
+
 export function missingUserIdResponse() {
   return Response.json(
     { error: 'server_misconfigured' },
     { status: 500 },
   );
+}
+
+// Returns false when the user does not exist; callers should already have
+// resolved a real userId via getCurrentUserId before reaching this point,
+// so a missing row indicates the user was deleted out from under an active
+// session, which we treat as not-admin rather than an exception.
+export async function isUserAdmin(userId: string): Promise<boolean> {
+  const rows = await db
+    .select({ isAdmin: users.isAdmin })
+    .from(users)
+    .where(eq(users.id, userId))
+    .limit(1);
+  if (rows.length === 0) return false;
+  return rows[0].isAdmin === true;
+}
+
+// The canonical admin gate for mutating routes. Resolves the user from the
+// proxy-set header, checks the isAdmin flag, and returns the userId on
+// success so the route can continue using it for downstream queries.
+// MissingUserIdHeaderError propagates unchanged (500); AdminRequiredError
+// is the not-an-admin path (route catches and returns adminRequiredResponse).
+export async function requireAdmin(req: Request): Promise<string> {
+  const userId = getCurrentUserId(req);
+  const ok = await isUserAdmin(userId);
+  if (!ok) throw new AdminRequiredError(userId);
+  return userId;
 }
