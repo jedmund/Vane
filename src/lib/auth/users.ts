@@ -1,4 +1,4 @@
-import { and, eq, isNotNull, ne } from 'drizzle-orm';
+import { and, eq, isNotNull, ne, sql } from 'drizzle-orm';
 import { ulid } from 'ulid';
 import db from '@/lib/db';
 import { chats, users } from '@/lib/db/schema';
@@ -11,6 +11,33 @@ export interface AppUser {
   email: string | null;
   name: string | null;
   createdAt: string;
+  isAdmin: boolean;
+}
+
+// Parsed once per upsert (not module-load) so a runtime-set env (e.g. a
+// docker-compose reload that swaps the value without a process restart on
+// our side) is picked up on the next login. Case-insensitive compare on
+// trimmed entries; empty / unset means "no allowlist".
+function parseAdminEmailAllowlist(): string[] {
+  const raw = process.env.OIDC_ADMIN_EMAILS;
+  if (!raw) return [];
+  return raw
+    .split(',')
+    .map((entry) => entry.trim().toLowerCase())
+    .filter((entry) => entry.length > 0);
+}
+
+// "A real admin is set up." The legacy synthetic user is admin by design
+// (zero-config upgrade path for single-user homelabs), but it does not
+// satisfy the bootstrap rule that the first real OIDC user becomes admin.
+// Without the id != 'legacy' exclusion the first real user would never be
+// promoted, because legacy already trips a naive 'any admin exists' check.
+async function realAdminExists(): Promise<boolean> {
+  const rows = await db
+    .select({ count: sql<number>`count(*)` })
+    .from(users)
+    .where(and(eq(users.isAdmin, true), ne(users.id, LEGACY_USER_ID)));
+  return (rows[0]?.count ?? 0) > 0;
 }
 
 // Look up by OIDC sub, create if missing. On a returning user we refresh
@@ -46,10 +73,25 @@ export async function upsertUserFromOIDC(
         email: email ?? row.email,
         name: name ?? row.name,
         createdAt: row.createdAt,
+        isAdmin: row.isAdmin,
       };
     }
     return row as AppUser;
   }
+
+  // Admin status is determined only at creation. Returning users keep
+  // whatever isAdmin they have; we do not silently flip it on every login
+  // if the env allowlist or admin headcount changes. Promotion / demotion
+  // after the fact is an explicit out-of-scope item for v1 (deferred to a
+  // future admin UI, per the plan).
+  const allowlist = parseAdminEmailAllowlist();
+  const normalizedEmail = email?.trim().toLowerCase() ?? null;
+  const allowlisted =
+    normalizedEmail !== null && allowlist.includes(normalizedEmail);
+  // Order matters: short-circuit on the allowlist match so we do not hit
+  // the DB count when we already know the answer.
+  const bootstrapFirstAdmin = allowlisted ? false : !(await realAdminExists());
+  const isAdmin = allowlisted || bootstrapFirstAdmin;
 
   const id = ulid();
   const createdAt = new Date().toISOString();
@@ -59,11 +101,21 @@ export async function upsertUserFromOIDC(
     email,
     name,
     createdAt,
+    isAdmin,
   });
+
+  if (isAdmin) {
+    const reason = allowlisted
+      ? 'allowlisted email'
+      : 'first real user';
+    console.log(
+      `[auth] Promoted ${email ?? sub} to admin (${reason}).`,
+    );
+  }
 
   await claimLegacyChatsIfFirstUser(id);
 
-  return { id, sub, email, name, createdAt };
+  return { id, sub, email, name, createdAt, isAdmin };
 }
 
 // On upgrade from a pre-OIDC deploy, every existing chat was backfilled
@@ -101,5 +153,6 @@ export async function getUserById(id: string): Promise<AppUser | null> {
     .from(users)
     .where(eq(users.id, id))
     .limit(1);
-  return rows.length > 0 ? (rows[0] as AppUser) : null;
+  if (rows.length === 0) return null;
+  return rows[0] as AppUser;
 }
