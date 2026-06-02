@@ -75,6 +75,7 @@ export const PATCH = async (
           id: updated.id,
           name: updated.name,
           type: updated.type,
+          config: updated.config,
           scope: updated.userId === null ? 'instance' : 'personal',
           chatModels: updated.chatModels,
           embeddingModels: updated.embeddingModels,
