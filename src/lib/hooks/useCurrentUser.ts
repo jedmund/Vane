@@ -6,6 +6,10 @@ export interface CurrentUser {
   id: string;
   email: string | null;
   name: string | null;
+  // Surfaced from /api/me so the client can hide admin-only affordances.
+  // The server still re-checks isAdmin on every mutation; this flag is for
+  // UX only and is not a trust boundary.
+  isAdmin: boolean;
 }
 
 // Module-level Promise cache. Locked decision: no SWR / react-query. Multiple
