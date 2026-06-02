@@ -1,7 +1,6 @@
 import path from 'node:path';
 import fs from 'fs';
-import { Config, ConfigModelProvider, UIConfigSections } from './types';
-import { hashObj } from '../utils/hash';
+import { Config, UIConfigSections } from './types';
 import { getModelProvidersUIConfigSection } from '../models/providers';
 
 class ConfigManager {
@@ -10,12 +9,15 @@ class ConfigManager {
     '/data/config.json',
   );
   configVersion = 1;
+  // modelProviders has been removed from the on-disk shape; providers now
+  // live in the SQLite providers table. The on-disk cleanup step that
+  // strips a stale modelProviders key from existing config.json files runs
+  // from src/lib/config/cleanup.ts at boot, before this manager reads.
   currentConfig: Config = {
     version: this.configVersion,
     setupComplete: false,
     preferences: {},
     personalization: {},
-    modelProviders: [],
     search: {
       searxngURL: '',
     },
@@ -173,58 +175,14 @@ class ConfigManager {
   }
 
   private initializeFromEnv() {
-    /* providers section*/
-    const providerConfigSections = getModelProvidersUIConfigSection();
-
-    this.uiConfigSections.modelProviders = providerConfigSections;
-
-    const newProviders: ConfigModelProvider[] = [];
-
-    providerConfigSections.forEach((provider) => {
-      const newProvider: ConfigModelProvider & { required?: string[] } = {
-        id: crypto.randomUUID(),
-        name: `${provider.name}`,
-        type: provider.key,
-        chatModels: [],
-        embeddingModels: [],
-        config: {},
-        required: [],
-        hash: '',
-      };
-
-      provider.fields.forEach((field) => {
-        newProvider.config[field.key] =
-          process.env[field.env!] ||
-          field.default ||
-          ''; /* Env var must exist for providers */
-
-        if (field.required) newProvider.required?.push(field.key);
-      });
-
-      let configured = true;
-
-      newProvider.required?.forEach((r) => {
-        if (!newProvider.config[r]) {
-          configured = false;
-        }
-      });
-
-      if (configured) {
-        const hash = hashObj(newProvider.config);
-        newProvider.hash = hash;
-        delete newProvider.required;
-
-        const exists = this.currentConfig.modelProviders.find(
-          (p) => p.hash === hash,
-        );
-
-        if (!exists) {
-          newProviders.push(newProvider);
-        }
-      }
-    });
-
-    this.currentConfig.modelProviders.push(...newProviders);
+    // The UI sections for "Add a provider" still need to know which
+    // provider types exist and what fields each one takes. That metadata
+    // is populated here so the frontend's settings panel can render the
+    // form. The env-derived provider INSTANCES that used to be seeded
+    // alongside this metadata are gone; provider rows now live in the
+    // SQLite providers table and are seeded by migration 0004 (which
+    // backfilled from the pre-Phase 1 config.json).
+    this.uiConfigSections.modelProviders = getModelProvidersUIConfigSection();
 
     /* search section */
     this.uiConfigSections.search.forEach((f) => {
@@ -271,97 +229,51 @@ class ConfigManager {
     this.saveConfig();
   }
 
-  public addModelProvider(type: string, name: string, config: any) {
-    const newModelProvider: ConfigModelProvider = {
-      id: crypto.randomUUID(),
-      name,
-      type,
-      config,
-      chatModels: [],
-      embeddingModels: [],
-      hash: hashObj(config),
-    };
-
-    this.currentConfig.modelProviders.push(newModelProvider);
-    this.saveConfig();
-
-    return newModelProvider;
-  }
-
-  public removeModelProvider(id: string) {
-    const index = this.currentConfig.modelProviders.findIndex(
-      (p) => p.id === id,
+  // These provider mutation methods used to write to config.json. Providers
+  // now live in the SQLite providers table; Phase 4 owns the rewrite of
+  // the /api/providers route handlers to write to the DB directly. Until
+  // that lands, calling any of these throws so a regression surfaces
+  // loudly rather than silently dropping writes.
+  public addModelProvider(_type: string, _name: string, _config: any): never {
+    throw new Error(
+      'configManager.addModelProvider is gone; providers are stored in the DB. Phase 4 will route this through /api/providers.',
     );
-
-    if (index === -1) return;
-
-    this.currentConfig.modelProviders =
-      this.currentConfig.modelProviders.filter((p) => p.id !== id);
-
-    this.saveConfig();
   }
 
-  public async updateModelProvider(id: string, name: string, config: any) {
-    const provider = this.currentConfig.modelProviders.find((p) => {
-      return p.id === id;
-    });
+  public removeModelProvider(_id: string): never {
+    throw new Error(
+      'configManager.removeModelProvider is gone; providers are stored in the DB. Phase 4 will route this through /api/providers.',
+    );
+  }
 
-    if (!provider) throw new Error('Provider not found');
-
-    provider.name = name;
-    provider.config = config;
-
-    this.saveConfig();
-
-    return provider;
+  public async updateModelProvider(
+    _id: string,
+    _name: string,
+    _config: any,
+  ): Promise<never> {
+    throw new Error(
+      'configManager.updateModelProvider is gone; providers are stored in the DB. Phase 4 will route this through /api/providers.',
+    );
   }
 
   public addProviderModel(
-    providerId: string,
-    type: 'embedding' | 'chat',
-    model: any,
-  ) {
-    const provider = this.currentConfig.modelProviders.find(
-      (p) => p.id === providerId,
+    _providerId: string,
+    _type: 'embedding' | 'chat',
+    _model: any,
+  ): never {
+    throw new Error(
+      'configManager.addProviderModel is gone; providers are stored in the DB. Phase 4 will route this through /api/providers.',
     );
-
-    if (!provider) throw new Error('Invalid provider id');
-
-    delete model.type;
-
-    if (type === 'chat') {
-      provider.chatModels.push(model);
-    } else {
-      provider.embeddingModels.push(model);
-    }
-
-    this.saveConfig();
-
-    return model;
   }
 
   public removeProviderModel(
-    providerId: string,
-    type: 'embedding' | 'chat',
-    modelKey: string,
-  ) {
-    const provider = this.currentConfig.modelProviders.find(
-      (p) => p.id === providerId,
+    _providerId: string,
+    _type: 'embedding' | 'chat',
+    _modelKey: string,
+  ): never {
+    throw new Error(
+      'configManager.removeProviderModel is gone; providers are stored in the DB. Phase 4 will route this through /api/providers.',
     );
-
-    if (!provider) throw new Error('Invalid provider id');
-
-    if (type === 'chat') {
-      provider.chatModels = provider.chatModels.filter(
-        (m) => m.key !== modelKey,
-      );
-    } else {
-      provider.embeddingModels = provider.embeddingModels.filter(
-        (m) => m.key != modelKey,
-      );
-    }
-
-    this.saveConfig();
   }
 
   public isSetupComplete() {

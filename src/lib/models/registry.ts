@@ -3,7 +3,6 @@ import BaseModelProvider, { createProviderInstance } from './base/provider';
 import { getProvidersForUser, StoredProvider } from '../db/providers';
 import { providers } from './providers';
 import { MinimalProvider, ModelList } from './types';
-import configManager from '../config';
 
 // Registry is per-request because provider visibility is per-user (instance
 // rows visible to everyone, personal rows only to their owner). The userId
@@ -118,139 +117,56 @@ class ModelRegistry {
     return model;
   }
 
-  // The mutation paths below still write through configManager, which has
-  // been gutted in the Phase 3 cleanup commit to be a no-op (the config.json
-  // modelProviders key is gone). Phase 4 owns the rewrite of the route
-  // handlers that call these methods; until then the calls will fail at
-  // runtime, which is the intended forcing function for the Phase 4 work.
+  // Mutation paths are stubs in Phase 3. Provider writes used to flow
+  // through configManager and end up in config.json; the providers table
+  // is the source of truth now and Phase 4 owns the rewrite of the
+  // /api/providers route handlers to insert/update/delete rows directly.
+  // These throw so a regression surfaces loudly rather than silently
+  // dropping the write.
   async addProvider(
-    type: string,
-    name: string,
-    config: Record<string, any>,
+    _type: string,
+    _name: string,
+    _config: Record<string, any>,
   ): Promise<ConfigModelProvider> {
-    const provider = providers[type];
-    if (!provider) throw new Error('Invalid provider type');
-
-    const newProvider = configManager.addModelProvider(type, name, config);
-
-    const instance = createProviderInstance(
-      provider,
-      newProvider.id,
-      newProvider.name,
-      newProvider.config,
-      newProvider.chatModels,
-      newProvider.embeddingModels,
+    throw new Error(
+      'ModelRegistry.addProvider is a Phase 3 stub; Phase 4 will write directly to the providers table.',
     );
-
-    let m: ModelList = { chat: [], embedding: [] };
-
-    try {
-      m = await instance.getModelList();
-    } catch (err: any) {
-      console.error(
-        `Failed to get model list for newly added provider. Type: ${type}, ID: ${newProvider.id}, Error: ${err.message}`,
-      );
-
-      m = {
-        chat: [
-          {
-            key: 'error',
-            name: err.message,
-          },
-        ],
-        embedding: [],
-      };
-    }
-
-    this.activeProviders.push({
-      ...newProvider,
-      provider: instance,
-    });
-
-    return {
-      ...newProvider,
-      chatModels: m.chat || [],
-      embeddingModels: m.embedding || [],
-    };
   }
 
-  async removeProvider(providerId: string): Promise<void> {
-    configManager.removeModelProvider(providerId);
-    this.activeProviders = this.activeProviders.filter(
-      (p) => p.id !== providerId,
+  async removeProvider(_providerId: string): Promise<void> {
+    throw new Error(
+      'ModelRegistry.removeProvider is a Phase 3 stub; Phase 4 will write directly to the providers table.',
     );
-
-    return;
   }
 
   async updateProvider(
-    providerId: string,
-    name: string,
-    config: any,
+    _providerId: string,
+    _name: string,
+    _config: any,
   ): Promise<ConfigModelProvider> {
-    const updated = await configManager.updateModelProvider(
-      providerId,
-      name,
-      config,
+    throw new Error(
+      'ModelRegistry.updateProvider is a Phase 3 stub; Phase 4 will write directly to the providers table.',
     );
-    const instance = createProviderInstance(
-      providers[updated.type],
-      providerId,
-      name,
-      config,
-      updated.chatModels,
-      updated.embeddingModels,
-    );
-
-    let m: ModelList = { chat: [], embedding: [] };
-
-    try {
-      m = await instance.getModelList();
-    } catch (err: any) {
-      console.error(
-        `Failed to get model list for updated provider. Type: ${updated.type}, ID: ${updated.id}, Error: ${err.message}`,
-      );
-
-      m = {
-        chat: [
-          {
-            key: 'error',
-            name: err.message,
-          },
-        ],
-        embedding: [],
-      };
-    }
-
-    this.activeProviders.push({
-      ...updated,
-      provider: instance,
-    });
-
-    return {
-      ...updated,
-      chatModels: m.chat || [],
-      embeddingModels: m.embedding || [],
-    };
   }
 
-  /* Using async here because maybe in the future we might want to add some validation?? */
   async addProviderModel(
-    providerId: string,
-    type: 'embedding' | 'chat',
-    model: any,
+    _providerId: string,
+    _type: 'embedding' | 'chat',
+    _model: any,
   ): Promise<any> {
-    const addedModel = configManager.addProviderModel(providerId, type, model);
-    return addedModel;
+    throw new Error(
+      'ModelRegistry.addProviderModel is a Phase 3 stub; Phase 4 will write directly to the providers table.',
+    );
   }
 
   async removeProviderModel(
-    providerId: string,
-    type: 'embedding' | 'chat',
-    modelKey: string,
+    _providerId: string,
+    _type: 'embedding' | 'chat',
+    _modelKey: string,
   ): Promise<void> {
-    configManager.removeProviderModel(providerId, type, modelKey);
-    return;
+    throw new Error(
+      'ModelRegistry.removeProviderModel is a Phase 3 stub; Phase 4 will write directly to the providers table.',
+    );
   }
 }
 
