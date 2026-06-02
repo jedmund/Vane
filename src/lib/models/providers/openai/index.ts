@@ -129,6 +129,13 @@ const providerConfigFields: UIConfigField[] = [
   },
 ];
 
+function deriveModelName(id: string): string {
+  return id
+    .split('-')
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
+
 class OpenAIProvider extends BaseModelProvider<OpenAIConfig> {
   async getDefaultModels(): Promise<ModelList> {
     if (this.config.baseURL === 'https://api.openai.com/v1') {
@@ -138,10 +145,28 @@ class OpenAIProvider extends BaseModelProvider<OpenAIConfig> {
       };
     }
 
-    return {
-      embedding: [],
-      chat: [],
-    };
+    // For custom OpenAI-compatible endpoints try fetching the model list
+    // from /v1/models. If it fails (non-compatible endpoint, network error)
+    // we silently fall back to empty so the provider can still be added and
+    // models configured manually.
+    try {
+      const res = await fetch(`${this.config.baseURL}/models`, {
+        headers: {
+          Authorization: `Bearer ${this.config.apiKey}`,
+          'Content-Type': 'application/json',
+        },
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (!res.ok) throw new Error(`GET /models returned ${res.status}`);
+      const data: { data?: { id: string }[] } = await res.json();
+      const models: Model[] = (data.data ?? []).map((m) => ({
+        key: m.id,
+        name: deriveModelName(m.id),
+      }));
+      return { embedding: [], chat: models };
+    } catch {
+      return { embedding: [], chat: [] };
+    }
   }
 
   async getModelList(): Promise<ModelList> {

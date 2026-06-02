@@ -1,11 +1,14 @@
 'use client';
 
+import { useState, useEffect } from 'react';
 import Navbar from './Navbar';
 import Chat from './Chat';
 import EmptyChat from './EmptyChat';
 import NextError from 'next/error';
 import { useChat } from '@/lib/hooks/useChat';
-import SettingsButtonMobile from './Settings/SettingsButtonMobile';
+import SettingsDialogue from './Settings/SettingsDialogue';
+import { useCurrentUser } from '@/lib/hooks/useCurrentUser';
+import { AnimatePresence } from 'framer-motion';
 import { Block } from '@/lib/types';
 import Loader from './ui/Loader';
 import EmptyProvidersBanner from './EmptyProvidersBanner';
@@ -36,19 +39,43 @@ export interface Widget {
 
 const ChatWindow = () => {
   const { hasError, notFound, messages, isReady } = useChat();
+  const { user, loading: userLoading } = useCurrentUser();
+  const [settingsOpen, setSettingsOpen] = useState(false);
+
+  // Auto-open settings on error, deep-linking to Connections. Admins get
+  // the Instance panel (they can add shared providers); non-admins get
+  // Personal (they can add their own).
+  useEffect(() => {
+    if (hasError && !userLoading) {
+      setSettingsOpen(true);
+    }
+  }, [hasError, userLoading]);
+
+  const isAdmin = user?.isAdmin === true;
+  const initialSection = isAdmin
+    ? 'instance-connections'
+    : 'personal-connections';
 
   if (hasError) {
     return (
-      <div className="relative">
-        <div className="absolute w-full flex flex-row items-center justify-end mr-5 mt-5">
-          <SettingsButtonMobile />
+      <>
+        <div className="relative">
+          <div className="flex flex-col items-center justify-center min-h-screen">
+            <p className="dark:text-white/70 text-black/70 text-sm">
+              Failed to connect to the server. Please try again later.
+            </p>
+          </div>
         </div>
-        <div className="flex flex-col items-center justify-center min-h-screen">
-          <p className="dark:text-white/70 text-black/70 text-sm">
-            Failed to connect to the server. Please try again later.
-          </p>
-        </div>
-      </div>
+        <AnimatePresence>
+          {settingsOpen && (
+            <SettingsDialogue
+              isOpen={settingsOpen}
+              setIsOpen={setSettingsOpen}
+              initialSection={initialSection}
+            />
+          )}
+        </AnimatePresence>
+      </>
     );
   }
 
