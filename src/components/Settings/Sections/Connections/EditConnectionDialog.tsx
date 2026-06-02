@@ -88,6 +88,14 @@ const EditConnectionDialog = ({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    // Defensive guard against submitting before hydration finishes. The
+    // submit button is disabled while `hydrating` is true, but a future
+    // refactor that removes that disable could expose an empty-form save
+    // and silently wipe the stored config. Bail loudly instead.
+    if (Object.keys(config).length === 0) {
+      toast.error('Connection has not finished loading yet.');
+      return;
+    }
     setLoading(true);
     try {
       const res = await fetch(`/api/providers/${modelProvider.id}`, {
