@@ -94,9 +94,14 @@ const allSections: SettingsSection[] = [
 const SettingsDialogue = ({
   isOpen,
   setIsOpen,
+  initialSection,
 }: {
   isOpen: boolean;
   setIsOpen: (active: boolean) => void;
+  // Optional deep-link target so callers (e.g. the empty-providers banner
+  // on the chat UI) can open the dialogue directly to a specific panel
+  // instead of always landing on the first section.
+  initialSection?: string;
 }) => {
   const [isLoading, setIsLoading] = useState(true);
   const [config, setConfig] = useState<any>(null);
@@ -112,7 +117,9 @@ const SettingsDialogue = ({
     [isAdmin],
   );
 
-  const [activeSection, setActiveSection] = useState<string>(allSections[0].key);
+  const [activeSection, setActiveSection] = useState<string>(
+    initialSection ?? allSections[0].key,
+  );
   const selectedSection =
     sections.find((s) => s.key === activeSection) ?? sections[0];
 
@@ -124,6 +131,16 @@ const SettingsDialogue = ({
       setActiveSection(sections[0].key);
     }
   }, [sections, activeSection]);
+
+  // When the dialogue is opened with a specific initialSection (e.g. from
+  // the empty-providers banner on the chat page), snap to that section each
+  // time it opens, not just on the very first mount. Otherwise the second
+  // click would land the user wherever they previously navigated.
+  useEffect(() => {
+    if (isOpen && initialSection) {
+      setActiveSection(initialSection);
+    }
+  }, [isOpen, initialSection]);
 
   useEffect(() => {
     if (isOpen) {
