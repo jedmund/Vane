@@ -12,6 +12,8 @@ export const register = async () => {
     // config manager reads the file. Order matters: ConfigManager loads
     // its in-memory copy during the import below, so the cleanup has to
     // run first to keep the on-disk and in-memory views consistent.
+    // Load-bearing: do not reorder the cleanup call below ConfigManager's
+    // import. See the doc comment in src/lib/config/cleanup.ts.
     try {
       const { stripStaleModelProvidersKey } = await import(
         './lib/config/cleanup'
