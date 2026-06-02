@@ -8,6 +8,7 @@ import { useChat } from '@/lib/hooks/useChat';
 import SettingsButtonMobile from './Settings/SettingsButtonMobile';
 import { Block } from '@/lib/types';
 import Loader from './ui/Loader';
+import EmptyProvidersBanner from './EmptyProvidersBanner';
 
 export interface BaseMessage {
   chatId: string;
@@ -56,6 +57,7 @@ const ChatWindow = () => {
       <NextError statusCode={404} />
     ) : (
       <div>
+        <EmptyProvidersBanner />
         {messages.length > 0 ? (
           <>
             <Navbar />
