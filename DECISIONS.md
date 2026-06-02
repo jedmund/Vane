@@ -1339,3 +1339,152 @@ that need the api_key go through `/api/providers/[id]/secret`.
   - Closing the dialogue refetches the provider list; if at least one
     provider was added, the banner unmounts.
 
+---
+
+## Audit follow-ups (post-Phase 7)
+
+Date: 2026-06-01
+
+The adversarial code review (swift-spinning-sky) surfaced a list of
+P1, P2, and NIT findings filed as follow-ups rather than blockers. This
+batch lands every item judged worth the churn before the umbrella PR
+merges. Findings deliberately skipped are listed at the bottom.
+
+### Migration 0005
+
+Hand-authored migration that does two things, both additive only:
+
+Defensive `INSERT OR IGNORE` of the synthetic `legacy` user followed by
+an `UPDATE ... WHERE id='legacy'` to set `isAdmin=1`. The 0004 migration
+only ran the UPDATE, which silently affects zero rows if 0003 was rolled
+back or never applied. The new two-statement form fixes both shapes
+(insert on fresh deploys where 0003 was somehow not run, update on
+deploys where the row already exists). INSERT OR IGNORE never
+overwrites; the UPDATE is idempotent.
+
+Picked the two-statement form over a single
+`INSERT ... ON CONFLICT(id) DO UPDATE`. Functionally equivalent but
+splits the concerns (row existence vs flag value) and mirrors the
+patterns in 0003 (INSERT OR IGNORE the legacy row) and 0004 (UPDATE
+isAdmin). Easier to audit by grep too.
+
+`CREATE UNIQUE INDEX providers_unique_idx ON providers (COALESCE(userId,
+''), type, name)`. SQLite treats NULL as distinct in UNIQUE constraints
+by default, which would mean two instance providers (userId IS NULL)
+with the same (type, name) could both be inserted. Wrapping in COALESCE
+collapses NULL to the empty string so instance rows collide on the same
+predicate as personal rows. If a duplicate is already in the table the
+CREATE fails loudly with SQLITE_CONSTRAINT_UNIQUE; that crash is the
+right response (operator must reconcile before upgrade).
+
+Picked the COALESCE-via-expression-index over `UNIQUE(userId, type,
+name)` precisely because the column-constraint form does not catch the
+NULL-NULL case.
+
+Verified against three sqlite shapes: fresh (clean apply), at 0004
+(adds the index + flips legacy admin), and at 0004 with a manually
+seeded duplicate instance provider (fails loudly as designed).
+
+### Drizzle schema not updated for the expression index
+
+The `providers` table definition in `src/lib/db/schema.ts` does NOT
+declare a `uniqueIndex` for the new index. Drizzle ORM does not have a
+clean primitive for expression-based unique indexes (COALESCE inside an
+index expression is SQL-native), and the schema TS is only consumed by
+the query builder, not the migration runner. The migration runner is
+what creates the index; the schema TS would not change runtime
+behaviour. Leaving it out keeps the file honest about what Drizzle
+itself can model.
+
+### Concurrent OIDC race
+
+Wrapped the INSERT in users.ts in a try/catch on
+SQLITE_CONSTRAINT_UNIQUE. On a collision the loser re-runs the SELECT
+and returns the winner's row. The user sees a successful login instead
+of a 500. The same path also handles the admin promotion bookkeeping
+correctly because the winner's row already has whatever isAdmin value
+was decided by the first request to finish.
+
+### Auto-delete corrupt provider rows
+
+parseRow now deletes the offending row after logging the warning, so
+the warning fires once and the row is gone. The deletion is best-effort
+(if the DELETE itself errors we log a second warning and continue);
+healthy rows in the same list continue to load. Trade-off: data loss
+on a row the operator might have wanted to repair. Judged acceptable
+because the row was already unusable; the warning gives enough context
+to recreate the connection.
+
+### Hide mutate controls during useCurrentUser load
+
+`useCurrentUser` already exposes a `loading` flag; ModelProvider now
+reads it and treats in-flight as "do not show controls". Result is a
+slightly later paint of the edit/delete buttons for admins on instance
+rows, which is preferable to the flicker of those buttons appearing and
+then briefly being hidden. Other surfaces (the per-row controls in the
+Connections panel) already gate on `user` being non-null, so no other
+edits were needed.
+
+### Empty-config submit guard in EditConnectionDialog
+
+Added an early-return in handleSubmit that bails if `config` has zero
+keys. The submit button is still disabled during hydration; this is a
+second layer in case a future refactor removes that disable. Toast
+message is operator-facing ("Connection has not finished loading yet.")
+so the bug is debuggable instead of silently dropping a save.
+
+### EmptyProvidersBanner 401 logging
+
+Logs a warning before suppressing the banner when /api/providers
+returns 401. The chat surface is gated by the proxy, so a 401 here
+points at an upstream auth bug. The warning makes the fingerprint
+findable in the console next time it fires.
+
+### OIDC_ADMIN_EMAILS whitespace-only warning
+
+parseAdminEmailAllowlist warns if the env is set but parses to an empty
+list. Distinguishes "operator forgot to set it" (no env, silent) from
+"operator typo'd a single comma into it" (set, parses to nothing, warn
+so it's debuggable).
+
+### Cleanup ordering docs
+
+Added a one-line note in both `src/lib/config/cleanup.ts` and
+`src/instrumentation.ts` flagging the load-bearing import order:
+cleanup must run before ConfigManager's import-time read of
+config.json. A reorder would silently leave a stale in-memory copy.
+
+### Items skipped (and why)
+
+- SettingsDialogue forcibly re-snaps to initialSection on every open.
+  Defensible: the EmptyProvidersBanner is a functional gate and the
+  user clicked the button explicitly. The re-snap is a feature.
+- Unicode normalization on email allowlist. Email providers normalize
+  at delivery time; user-entered email in OIDC claims is already
+  canonical for this purpose. Extreme edge case for the homelab.
+- Banner mobile overlap. Cannot verify without a browser test; visual
+  only, no functional risk.
+- snapshot-vs-SQL isAdmin default cosmetic divergence. SQLite treats
+  both `0` and `false` as the same column default for INTEGER columns.
+- Non-atomic config.json rewrite. Mitigated by retry-on-next-boot;
+  acceptable for a single-writer surface.
+- Concurrent model add races. Admin-only single-actor in practice;
+  json_set rewrite is a real refactor, scoped out.
+- Pre-existing DeleteProviderDialog cancel button comment. Cancel
+  already calls setOpen(false) explicitly; the audit pointed at line
+  93 but the explicit close was already there.
+
+### Verification
+
+- yarn build clean after each commit and at the end of the series.
+- Migration 0005 verified against fresh sqlite (clean apply), against
+  a sqlite already at 0004 (adds the index, flips legacy admin), and
+  against a sqlite where two duplicate instance providers were
+  manually inserted (CREATE INDEX fails with SQLITE_CONSTRAINT_UNIQUE,
+  which is the intended operator-actionable response).
+- Audit greps:
+  - `rg "SET .?isAdmin.? = 1 WHERE .?id.? = .?legacy" drizzle/`
+    matches in both 0004 and 0005 (intentional belt-and-suspenders).
+  - `rg "UNIQUE" drizzle/0005*` shows the providers index.
+  - `rg "setOpen.false." src/components/Settings/Sections/Models/DeleteProviderDialog.tsx`
+    shows two matches (success path and cancel button).
