@@ -101,6 +101,28 @@ export const POST = async (req: NextRequest) => {
       config,
     });
 
+    // Auto-sync remote models on creation. Instantiate the provider class,
+    // call getDefaultModels(), and write the result back to the row so the
+    // provider is immediately usable without a manual "Add Model" step.
+    try {
+      const Provider = providerClasses[type];
+      const parsed = Provider.parseAndValidate(config);
+      const instance = new Provider(created.id, name, parsed);
+      const modelList = await instance.getDefaultModels();
+      const { updateProviderRow } = await import('@/lib/db/providers');
+      updateProviderRow(created.id, {
+        chatModels: modelList.chat,
+        embeddingModels: modelList.embedding,
+      });
+      created.chatModels = modelList.chat;
+      created.embeddingModels = modelList.embedding;
+    } catch (err) {
+      console.warn(
+        `Auto-sync models failed for provider ${created.id} (${type}):`,
+        err,
+      );
+    }
+
     return Response.json(
       {
         provider: {

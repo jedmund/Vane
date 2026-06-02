@@ -24,7 +24,7 @@ import PersonalConnections from './Sections/Connections/PersonalConnections';
 import InstanceConnections from './Sections/Connections/InstanceConnections';
 import { useCurrentUser } from '@/lib/hooks/useCurrentUser';
 
-type SettingsSection = {
+interface SettingsSection {
   key: string;
   name: string;
   description: string;
@@ -32,13 +32,19 @@ type SettingsSection = {
   component: any;
   dataAdd: string;
   adminOnly?: boolean;
-};
+}
 
-// Section order: keep Preferences / Personalization / Models / Search where
-// users already expect them, then append the management-oriented Connection
-// panels at the end. Instance Connections is filtered out for non-admins
-// inside the component below; it stays in the master list so the admin
-// view only differs by visibility, not by section order.
+// Section group headers create visual separators in the sidebar. Sections
+// before the first group header render in an unnamed group.
+interface GroupHeader {
+  kind: 'group';
+  name: string;
+}
+
+type SidebarEntry = GroupHeader | SettingsSection;
+
+// The first group (Preferences, Personalization, Models, Search) has no
+// header. The second group is "Connections" and nests Personal / Instance.
 const allSections: SettingsSection[] = [
   {
     key: 'preferences',
@@ -72,9 +78,12 @@ const allSections: SettingsSection[] = [
     component: SearchSection,
     dataAdd: 'search',
   },
+];
+
+const connectionSections: SettingsSection[] = [
   {
     key: 'personal-connections',
-    name: 'Personal Connections',
+    name: 'Personal',
     description: 'Manage the AI connections only you can see.',
     icon: User,
     component: PersonalConnections,
@@ -82,7 +91,7 @@ const allSections: SettingsSection[] = [
   },
   {
     key: 'instance-connections',
-    name: 'Instance Connections',
+    name: 'Instance',
     description: 'Manage the shared AI connections every user can see.',
     icon: Building2,
     component: InstanceConnections,
@@ -117,20 +126,30 @@ const SettingsDialogue = ({
     [isAdmin],
   );
 
+  const visibleConnections = useMemo(
+    () => connectionSections.filter((s) => !s.adminOnly || isAdmin),
+    [isAdmin],
+  );
+
+  const allVisible = useMemo(
+    () => [...allSections, ...connectionSections].filter((s) => !s.adminOnly || isAdmin),
+    [isAdmin],
+  );
+
   const [activeSection, setActiveSection] = useState<string>(
     initialSection ?? allSections[0].key,
   );
   const selectedSection =
-    sections.find((s) => s.key === activeSection) ?? sections[0];
+    allVisible.find((s) => s.key === activeSection) ?? allVisible[0];
 
   // If the active section disappears because admin status flipped (e.g. the
   // user data loaded after the initial render), snap back to a section that
   // is still in the visible list.
   useEffect(() => {
-    if (!sections.find((s) => s.key === activeSection)) {
-      setActiveSection(sections[0].key);
+    if (!allVisible.find((s) => s.key === activeSection)) {
+      setActiveSection(allVisible[0].key);
     }
-  }, [sections, activeSection]);
+  }, [allVisible, activeSection]);
 
   // When the dialogue is opened with a specific initialSection (e.g. from
   // the empty-providers banner on the chat page), snap to that section each
@@ -206,7 +225,7 @@ const SettingsDialogue = ({
                   <div className="flex flex-col items-start space-y-1 mt-8">
                     {sections.map((section) => (
                       <button
-                        key={section.dataAdd}
+                        key={section.key}
                         className={cn(
                           `flex flex-row items-center space-x-2 px-2 py-1.5 rounded-lg w-full text-sm hover:bg-light-200 hover:dark:bg-dark-200 transition duration-200 active:scale-95`,
                           activeSection === section.key
@@ -219,6 +238,30 @@ const SettingsDialogue = ({
                         <p>{section.name}</p>
                       </button>
                     ))}
+                    {visibleConnections.length > 0 && (
+                      <>
+                        <div className="w-full pt-3 pb-1">
+                          <p className="text-[10px] font-semibold uppercase tracking-widest text-black/40 dark:text-white/40 px-2">
+                            Connections
+                          </p>
+                        </div>
+                        {visibleConnections.map((section) => (
+                          <button
+                            key={section.key}
+                            className={cn(
+                              `flex flex-row items-center space-x-2 px-2 py-1.5 rounded-lg w-full text-sm hover:bg-light-200 hover:dark:bg-dark-200 transition duration-200 active:scale-95`,
+                              activeSection === section.key
+                                ? 'bg-light-200 dark:bg-dark-200 text-black/90 dark:text-white/90'
+                                : ' text-black/70 dark:text-white/70',
+                            )}
+                            onClick={() => setActiveSection(section.key)}
+                          >
+                            <section.icon size={17} />
+                            <p>{section.name}</p>
+                          </button>
+                        ))}
+                      </>
+                    )}
                   </div>
                 </div>
                 <div className="flex flex-col space-y-1 py-[18px] px-2">
@@ -248,7 +291,7 @@ const SettingsDialogue = ({
                     />
                   </button>
                   <Select
-                    options={sections.map((section) => {
+                    options={allVisible.map((section) => {
                       return {
                         value: section.key,
                         key: section.key,
