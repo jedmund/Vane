@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { parse as parseCookies } from 'cookie';
-import { SESSION_COOKIE, buildSessionCookieHeader } from '@/lib/auth/cookies';
+import { getAppOrigin, SESSION_COOKIE, buildSessionCookieHeader } from '@/lib/auth/cookies';
 import { getSessionStore, getSessionTtlSeconds } from '@/lib/auth/session-store';
 
 // Next.js 16 renamed `middleware.ts` to `proxy.ts` and made the new file
@@ -59,7 +59,7 @@ export async function proxy(req: NextRequest) {
         { status: 401 },
       );
     }
-    const loginUrl = new URL('/login', req.url);
+    const loginUrl = new URL('/login', getAppOrigin());
     loginUrl.searchParams.set('returnTo', `${pathname}${search}`);
     return NextResponse.redirect(loginUrl, { status: 302 });
   }

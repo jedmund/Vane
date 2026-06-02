@@ -5,12 +5,14 @@ import {
   SESSION_COOKIE,
   buildStateCookieHeader,
   encodeStateCookie,
+  getAppOrigin,
   sanitizeReturnTo,
 } from '@/lib/auth/cookies';
 import { getSessionStore } from '@/lib/auth/session-store';
 
 export async function GET(req: NextRequest) {
   const url = new URL(req.url);
+  const appOrigin = getAppOrigin();
   const returnTo = sanitizeReturnTo(url.searchParams.get('returnTo'));
 
   // Already-logged-in short-circuit: skip the PocketID round trip if the
@@ -21,7 +23,7 @@ export async function GET(req: NextRequest) {
   if (existingToken) {
     const rec = await getSessionStore().get(existingToken);
     if (rec) {
-      return NextResponse.redirect(new URL(returnTo, url.origin), {
+      return NextResponse.redirect(new URL(returnTo, appOrigin), {
         status: 302,
       });
     }
