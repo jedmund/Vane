@@ -579,3 +579,84 @@ readability then `join('; ')`. The trailing-`;` debate (some examples
 add one, the spec doesn't require it) is resolved by omitting it,
 which matches the W3C example output and avoids a dangling-semicolon
 parse quirk in older browsers.
+
+## Phase 1: schema + migration 0004
+
+### `users.isAdmin` defaults to false
+
+The default is 0 (false) at the column level. Admin status is only ever
+granted by an explicit path: the first-OIDC-user bootstrap, or an email
+match against `OIDC_ADMIN_EMAILS` (both Phase 2). A `DEFAULT 1` here
+would mean every brand-new row, including any synthetic future user
+record we forget to set explicitly, ships with admin powers. That is
+the wrong failure mode in a multi-user world.
+
+### `providers.userId` is nullable; NULL means instance scope
+
+We considered a separate boolean `isInstance` column with a NOT NULL
+`userId` pointing at "whichever admin created it". Rejected because:
+
+1. The single-query visibility filter we need on every list is
+   `WHERE userId IS NULL OR userId = ?`. That maps cleanly onto a
+   nullable column with a regular index.
+2. An instance provider does not semantically belong to the admin who
+   happened to create it. If that admin's account is later removed,
+   the connection should remain. With nullable userId there is nothing
+   to cascade.
+3. SQLite's `REFERENCES users(id)` with no `ON DELETE` action is happy
+   to hold a NULL forever; no extra constraint plumbing required.
+
+### Legacy user is promoted to admin
+
+`UPDATE users SET isAdmin=1 WHERE id='legacy'`. The legacy row already
+owns every pre-OIDC chat (set by 0003) and, after Phase 2, will own
+every pre-existing config.json entry as instance scope. Making it admin
+keeps single-user homelab upgrades zero-config: the operator visits
+the new connections page, sees their existing connections marked
+Instance, and can edit them. When the first real OIDC user lands and
+inherits the legacy chats, Phase 2's bootstrap logic also flags them
+admin, so admin powers transfer cleanly.
+
+### Seed-from-config.json runs in JS inside the migrate runner
+
+The runner already special-cases `0001` and `0002` for data shuffling
+that pure SQL cannot express; we follow the same pattern for `0004`.
+The schema-change statements run as SQL (so the snapshot stays in
+sync with drizzle-kit's expectations), then the JS block reads
+`data/config.json` and inserts one `providers` row per
+`modelProviders` entry with `userId = NULL`. Both the SQL and the JS
+seed are gated by the same `ran_migrations` row keyed `0004`, so a
+second invocation skips the whole block. ULIDs are generated per row.
+
+Alternative considered: a generic startup-time "ensure providers seeded"
+step keyed by a flag in `config.json`. Rejected because the seed is a
+one-time data migration, not a steady-state idempotent reconciliation;
+the migrations table is the right ledger.
+
+### `data/config.json` is NOT rewritten by this migration
+
+The `modelProviders` key stays in `config.json` for now. Removing it
+mid-migration is risky: if Phase 1 lands and we have to roll back, the
+existing `serverRegistry` / `configManager` code still expects the
+key to be present. Phase 3 owns the refactor that stops reading the
+key, and Phase 3's commit is the appropriate moment to delete it.
+Phase 1 stays additive only: nothing existing changes behavior.
+
+### Boolean column type uses Drizzle's `integer` with `mode: 'boolean'`
+
+Drizzle's sqlite-core wraps the 0/1 storage and gives us a `boolean`
+TS type at the schema layer. The migration SQL writes `INTEGER NOT
+NULL DEFAULT 0` directly (no boolean keyword in SQLite). The
+snapshot's `"default": false` mirrors Drizzle's representation.
+
+### Provider `config` is a `text` column, not Drizzle JSON mode
+
+We store the JSON blob as plain text and parse / stringify at the
+application boundary. JSON mode in sqlite-core works, but the blob
+includes secrets (`api_key`) that we want to be deliberate about
+touching; keeping it opaque at the schema layer means every read site
+has to think about parsing, which is a useful forcing function for
+the access-control plumbing in Phase 4. Encryption at rest is out of
+scope per the plan; the blob is plaintext but at least the column
+type is explicit about being a serialised payload, not structured
+data.
