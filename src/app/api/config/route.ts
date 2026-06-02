@@ -2,6 +2,11 @@ import configManager from '@/lib/config';
 import ModelRegistry from '@/lib/models/registry';
 import { NextRequest, NextResponse } from 'next/server';
 import { ConfigModelProvider } from '@/lib/config/types';
+import {
+  getCurrentUserId,
+  MissingUserIdHeaderError,
+  missingUserIdResponse,
+} from '@/lib/db/scoped';
 
 type SaveConfigBody = {
   key: string;
@@ -10,13 +15,14 @@ type SaveConfigBody = {
 
 export const GET = async (req: NextRequest) => {
   try {
+    const userId = getCurrentUserId(req);
     const values = configManager.getCurrentConfig();
     const fields = configManager.getUIConfigSections();
 
-    const modelRegistry = new ModelRegistry();
+    const modelRegistry = new ModelRegistry(userId);
     const modelProviders = await modelRegistry.getActiveProviders();
 
-    values.modelProviders = values.modelProviders.map(
+    values.modelProviders = (values.modelProviders ?? []).map(
       (mp: ConfigModelProvider) => {
         const activeProvider = modelProviders.find((p) => p.id === mp.id);
 
@@ -34,6 +40,7 @@ export const GET = async (req: NextRequest) => {
       fields,
     });
   } catch (err) {
+    if (err instanceof MissingUserIdHeaderError) return missingUserIdResponse();
     console.error('Error in getting config: ', err);
     return Response.json(
       { message: 'An error has occurred.' },

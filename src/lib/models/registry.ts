@@ -1,37 +1,64 @@
 import { ConfigModelProvider } from '../config/types';
 import BaseModelProvider, { createProviderInstance } from './base/provider';
-import { getConfiguredModelProviders } from '../config/serverRegistry';
+import { getProvidersForUser, StoredProvider } from '../db/providers';
 import { providers } from './providers';
 import { MinimalProvider, ModelList } from './types';
 import configManager from '../config';
 
+// Registry is per-request because provider visibility is per-user (instance
+// rows visible to everyone, personal rows only to their owner). The userId
+// is required and never optional: silently expanding scope to "all
+// providers" would defeat the whole point of the admin/user split.
 class ModelRegistry {
   activeProviders: (ConfigModelProvider & {
     provider: BaseModelProvider<any>;
   })[] = [];
 
-  constructor() {
+  constructor(private userId: string) {
     this.initializeActiveProviders();
   }
 
   private initializeActiveProviders() {
-    const configuredProviders = getConfiguredModelProviders();
+    const rows = getProvidersForUser(this.userId);
 
-    configuredProviders.forEach((p) => {
+    rows.forEach((row) => {
       try {
-        const provider = providers[p.type];
-        if (!provider) throw new Error('Invalid provider type');
+        const Provider = providers[row.type];
+        if (!Provider) throw new Error('Invalid provider type');
 
         this.activeProviders.push({
-          ...p,
-          provider: createProviderInstance(provider, p.id, p.name, p.config),
+          ...this.toConfigShape(row),
+          provider: createProviderInstance(
+            Provider,
+            row.id,
+            row.name,
+            row.config,
+            row.chatModels,
+            row.embeddingModels,
+          ),
         });
       } catch (err) {
         console.error(
-          `Failed to initialize provider. Type: ${p.type}, ID: ${p.id}, Config: ${JSON.stringify(p.config)}, Error: ${err}`,
+          `Failed to initialize provider. Type: ${row.type}, ID: ${row.id}, Error: ${err}`,
         );
       }
     });
+  }
+
+  // Phase 3 keeps the existing in-memory shape (ConfigModelProvider) so
+  // downstream consumers do not need to change. The hash field is left
+  // empty: it was previously used by configManager to dedupe env-derived
+  // providers against on-disk providers, and that dedup path is gone.
+  private toConfigShape(row: StoredProvider): ConfigModelProvider {
+    return {
+      id: row.id,
+      name: row.name,
+      type: row.type,
+      config: row.config,
+      chatModels: row.chatModels,
+      embeddingModels: row.embeddingModels,
+      hash: '',
+    };
   }
 
   async getActiveProviders() {
@@ -91,6 +118,11 @@ class ModelRegistry {
     return model;
   }
 
+  // The mutation paths below still write through configManager, which has
+  // been gutted in the Phase 3 cleanup commit to be a no-op (the config.json
+  // modelProviders key is gone). Phase 4 owns the rewrite of the route
+  // handlers that call these methods; until then the calls will fail at
+  // runtime, which is the intended forcing function for the Phase 4 work.
   async addProvider(
     type: string,
     name: string,
@@ -106,6 +138,8 @@ class ModelRegistry {
       newProvider.id,
       newProvider.name,
       newProvider.config,
+      newProvider.chatModels,
+      newProvider.embeddingModels,
     );
 
     let m: ModelList = { chat: [], embedding: [] };
@@ -164,6 +198,8 @@ class ModelRegistry {
       providerId,
       name,
       config,
+      updated.chatModels,
+      updated.embeddingModels,
     );
 
     let m: ModelList = { chat: [], embedding: [] };
