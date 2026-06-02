@@ -5,11 +5,12 @@ import {
 } from '@/lib/config/types';
 import { cn } from '@/lib/utils';
 import { Loader2, Plug2 } from 'lucide-react';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { toast } from 'sonner';
 import RevealSecretDialog from './RevealSecretDialog';
 import EditConnectionDialog from './EditConnectionDialog';
 import DeleteConnectionDialog from './DeleteConnectionDialog';
+import SetDefaultDialog from './SetDefaultDialog';
 
 type Scope = 'personal' | 'instance';
 
@@ -28,6 +29,23 @@ const ConnectionsList = ({
 }) => {
   const [providers, setProviders] = useState<ConfigModelProvider[]>([]);
   const [loading, setLoading] = useState(true);
+  const [defaults, setDefaults] = useState<{
+    chatProviderId: string | null;
+    chatModelKey: string | null;
+    embeddingProviderId: string | null;
+    embeddingModelKey: string | null;
+  }>({ chatProviderId: null, chatModelKey: null, embeddingProviderId: null, embeddingModelKey: null });
+
+  const fetchDefaults = useCallback(async () => {
+    try {
+      const res = await fetch('/api/providers/defaults');
+      if (res.ok) setDefaults(await res.json());
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    fetchDefaults();
+  }, [fetchDefaults]);
 
   useEffect(() => {
     let cancelled = false;
@@ -142,6 +160,42 @@ const ConnectionsList = ({
                 </div>
               </div>
               <div className="flex flex-row items-center gap-1 shrink-0">
+                {rowScope === 'instance' && (
+                  <SetDefaultDialog
+                    providerId={provider.id}
+                    chatModels={provider.chatModels.filter((m) => m.key !== 'error')}
+                    embeddingModels={provider.embeddingModels.filter((m) => m.key !== 'error')}
+                    currentChatProviderId={defaults.chatProviderId}
+                    currentChatModelKey={defaults.chatModelKey}
+                    currentEmbeddingProviderId={defaults.embeddingProviderId}
+                    currentEmbeddingModelKey={defaults.embeddingModelKey}
+                    onSaved={fetchDefaults}
+                  >
+                    <button
+                      type="button"
+                      className={cn(
+                        'group p-1.5 rounded-md transition-colors',
+                        defaults.chatProviderId === provider.id || defaults.embeddingProviderId === provider.id
+                          ? 'text-sky-500 hover:text-sky-600'
+                          : 'text-black/40 dark:text-white/40 hover:text-black/70 hover:dark:text-white/70 hover:bg-light-200 hover:dark:bg-dark-200',
+                      )}
+                      title="Set as instance default"
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill={defaults.chatProviderId === provider.id || defaults.embeddingProviderId === provider.id ? 'currentColor' : 'none'}
+                        stroke="currentColor"
+                        strokeWidth="2"
+                        strokeLinecap="round"
+                        strokeLinejoin="round"
+                      >
+                        <polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" />
+                      </svg>
+                    </button>
+                  </SetDefaultDialog>
+                )}
                 <RevealSecretDialog modelProvider={provider} />
                 <EditConnectionDialog
                   modelProvider={provider}
