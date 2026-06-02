@@ -69,7 +69,11 @@ type Config = {
   personalization: {
     [key: string]: any;
   };
-  modelProviders: ConfigModelProvider[];
+  // Optional and effectively deprecated: providers now live in the SQLite
+  // providers table, not config.json. The field is kept on the type so the
+  // /api/config GET response can still surface a populated list (built from
+  // the DB) for callers that have not yet migrated to /api/providers.
+  modelProviders?: ConfigModelProvider[];
   search: {
     [key: string]: any;
   };
