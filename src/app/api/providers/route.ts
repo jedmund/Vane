@@ -1,16 +1,25 @@
 import ModelRegistry from '@/lib/models/registry';
 import { NextRequest } from 'next/server';
 import {
+  AdminRequiredError,
+  adminRequiredResponse,
   getCurrentUserId,
   MissingUserIdHeaderError,
   missingUserIdResponse,
+  requireAdmin,
 } from '@/lib/db/scoped';
+import { createProvider } from '@/lib/db/providers';
+import { providers as providerClasses } from '@/lib/models/providers';
 
 export const GET = async (req: Request) => {
   try {
     const userId = getCurrentUserId(req);
     const registry = new ModelRegistry(userId);
 
+    // getActiveProviders already shapes the response without api_key or
+    // base_url; the registry only surfaces id/name/type/scope/chatModels/
+    // embeddingModels. The raw config blob stays inside the registry's
+    // private activeProviders array and never crosses this boundary.
     const activeProviders = await registry.getActiveProviders();
 
     const filteredProviders = activeProviders.filter((p) => {
@@ -43,7 +52,7 @@ export const POST = async (req: NextRequest) => {
   try {
     const userId = getCurrentUserId(req);
     const body = await req.json();
-    const { type, name, config } = body;
+    const { type, name, config, scope: rawScope } = body;
 
     if (!type || !name || !config) {
       return Response.json(
@@ -56,13 +65,52 @@ export const POST = async (req: NextRequest) => {
       );
     }
 
-    const registry = new ModelRegistry(userId);
+    // Unknown provider types should not get a row written. The /models
+    // endpoints would later fail to resolve them and the row would sit
+    // permanently broken.
+    if (!providerClasses[type]) {
+      return Response.json(
+        {
+          message: `Unknown provider type: ${type}`,
+        },
+        {
+          status: 400,
+        },
+      );
+    }
 
-    const newProvider = await registry.addProvider(type, name, config);
+    const scope: 'instance' | 'personal' =
+      rawScope === 'instance' ? 'instance' : 'personal';
+
+    if (scope === 'instance') {
+      // requireAdmin re-resolves the userId from headers, which is fine:
+      // the second call is cheap and keeps the admin gate identical to
+      // every other admin-only mutation in the codebase.
+      try {
+        await requireAdmin(req);
+      } catch (err) {
+        if (err instanceof AdminRequiredError) return adminRequiredResponse();
+        throw err;
+      }
+    }
+
+    const created = createProvider({
+      userId: scope === 'instance' ? null : userId,
+      type,
+      name,
+      config,
+    });
 
     return Response.json(
       {
-        provider: newProvider,
+        provider: {
+          id: created.id,
+          name: created.name,
+          type: created.type,
+          scope,
+          chatModels: created.chatModels,
+          embeddingModels: created.embeddingModels,
+        },
       },
       {
         status: 200,
