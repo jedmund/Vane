@@ -1,5 +1,4 @@
 import { UIConfigField } from '@/lib/config/types';
-import { getConfiguredModelProviderById } from '@/lib/config/serverRegistry';
 import { Model, ModelList, ProviderMetadata } from '../../types';
 import OpenAIEmbedding from './openaiEmbedding';
 import BaseEmbedding from '../../base/embedding';
@@ -131,10 +130,6 @@ const providerConfigFields: UIConfigField[] = [
 ];
 
 class OpenAIProvider extends BaseModelProvider<OpenAIConfig> {
-  constructor(id: string, name: string, config: OpenAIConfig) {
-    super(id, name, config);
-  }
-
   async getDefaultModels(): Promise<ModelList> {
     if (this.config.baseURL === 'https://api.openai.com/v1') {
       return {
@@ -151,14 +146,10 @@ class OpenAIProvider extends BaseModelProvider<OpenAIConfig> {
 
   async getModelList(): Promise<ModelList> {
     const defaultModels = await this.getDefaultModels();
-    const configProvider = getConfiguredModelProviderById(this.id)!;
 
     return {
-      embedding: [
-        ...defaultModels.embedding,
-        ...configProvider.embeddingModels,
-      ],
-      chat: [...defaultModels.chat, ...configProvider.chatModels],
+      embedding: [...defaultModels.embedding, ...this.embeddingModels],
+      chat: [...defaultModels.chat, ...this.chatModels],
     };
   }
 

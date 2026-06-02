@@ -1,15 +1,8 @@
 import configManager from './index';
-import { ConfigModelProvider } from './types';
 
-export const getConfiguredModelProviders = (): ConfigModelProvider[] => {
-  return configManager.getConfig('modelProviders', []);
-};
-
-export const getConfiguredModelProviderById = (
-  id: string,
-): ConfigModelProvider | undefined => {
-  return getConfiguredModelProviders().find((p) => p.id === id) ?? undefined;
-};
-
+// Providers used to live here; they now live in the SQLite providers table
+// and are read via src/lib/db/providers.ts. SearXNG URL stays in
+// data/config.json because it is a global server setting, not a per-user
+// connection.
 export const getSearxngURL = () =>
   configManager.getConfig('search.searxngURL', '');

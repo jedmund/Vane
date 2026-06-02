@@ -1,5 +1,4 @@
 import { UIConfigField } from '@/lib/config/types';
-import { getConfiguredModelProviderById } from '@/lib/config/serverRegistry';
 import { Model, ModelList, ProviderMetadata } from '../../types';
 import GeminiEmbedding from './geminiEmbedding';
 import BaseEmbedding from '../../base/embedding';
@@ -25,10 +24,6 @@ const providerConfigFields: UIConfigField[] = [
 ];
 
 class GeminiProvider extends BaseModelProvider<GeminiConfig> {
-  constructor(id: string, name: string, config: GeminiConfig) {
-    super(id, name, config);
-  }
-
   async getDefaultModels(): Promise<ModelList> {
     const res = await fetch(
       `https://generativelanguage.googleapis.com/v1beta/models?key=${this.config.apiKey}`,
@@ -72,14 +67,10 @@ class GeminiProvider extends BaseModelProvider<GeminiConfig> {
 
   async getModelList(): Promise<ModelList> {
     const defaultModels = await this.getDefaultModels();
-    const configProvider = getConfiguredModelProviderById(this.id)!;
 
     return {
-      embedding: [
-        ...defaultModels.embedding,
-        ...configProvider.embeddingModels,
-      ],
-      chat: [...defaultModels.chat, ...configProvider.chatModels],
+      embedding: [...defaultModels.embedding, ...this.embeddingModels],
+      chat: [...defaultModels.chat, ...this.chatModels],
     };
   }
 

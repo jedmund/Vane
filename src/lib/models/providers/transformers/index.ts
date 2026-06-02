@@ -1,5 +1,4 @@
 import { UIConfigField } from '@/lib/config/types';
-import { getConfiguredModelProviderById } from '@/lib/config/serverRegistry';
 import { Model, ModelList, ProviderMetadata } from '../../types';
 import BaseModelProvider from '../../base/provider';
 import BaseLLM from '../../base/llm';
@@ -26,10 +25,6 @@ const defaultEmbeddingModels: Model[] = [
 const providerConfigFields: UIConfigField[] = [];
 
 class TransformersProvider extends BaseModelProvider<TransformersConfig> {
-  constructor(id: string, name: string, config: TransformersConfig) {
-    super(id, name, config);
-  }
-
   async getDefaultModels(): Promise<ModelList> {
     return {
       embedding: [...defaultEmbeddingModels],
@@ -39,13 +34,9 @@ class TransformersProvider extends BaseModelProvider<TransformersConfig> {
 
   async getModelList(): Promise<ModelList> {
     const defaultModels = await this.getDefaultModels();
-    const configProvider = getConfiguredModelProviderById(this.id)!;
 
     return {
-      embedding: [
-        ...defaultModels.embedding,
-        ...configProvider.embeddingModels,
-      ],
+      embedding: [...defaultModels.embedding, ...this.embeddingModels],
       chat: [],
     };
   }

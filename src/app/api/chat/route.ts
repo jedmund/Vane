@@ -156,7 +156,7 @@ export const POST = async (req: Request) => {
       return ownershipErrorResponse();
     }
 
-    const registry = new ModelRegistry();
+    const registry = new ModelRegistry(userId);
 
     const [llm, embedding] = await Promise.all([
       registry.loadChatModel(body.chatModel.providerId, body.chatModel.key),
