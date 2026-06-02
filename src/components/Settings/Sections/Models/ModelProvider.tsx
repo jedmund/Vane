@@ -19,7 +19,7 @@ const ModelProvider = ({
   setProviders: React.Dispatch<React.SetStateAction<ConfigModelProvider[]>>;
 }) => {
   const [open, setOpen] = useState(true);
-  const { user } = useCurrentUser();
+  const { user, loading: userLoading } = useCurrentUser();
 
   // Scope is supplied by /api/providers (Phase 4). Older payloads that lack
   // it are treated as personal: the list endpoint only returns instance rows
@@ -27,7 +27,11 @@ const ModelProvider = ({
   // one the caller is allowed to touch.
   const scope: 'instance' | 'personal' = modelProvider.scope ?? 'personal';
   const isAdmin = user?.isAdmin === true;
-  const canMutate = isAdmin || scope === 'personal';
+  // While useCurrentUser is in flight `isAdmin` is false for everyone, so
+  // an instance row briefly hides its mutate controls before re-rendering
+  // with admin privileges. Wait for the fetch to settle before deciding
+  // whether to show the controls at all.
+  const canMutate = !userLoading && (isAdmin || scope === 'personal');
 
   const handleModelDelete = async (
     type: 'chat' | 'embedding',
