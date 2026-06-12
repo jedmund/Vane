@@ -169,15 +169,6 @@ class OpenAIProvider extends BaseModelProvider<OpenAIConfig> {
     }
   }
 
-  async getModelList(): Promise<ModelList> {
-    const defaultModels = await this.getDefaultModels();
-
-    return {
-      embedding: [...defaultModels.embedding, ...this.embeddingModels],
-      chat: [...defaultModels.chat, ...this.chatModels],
-    };
-  }
-
   async loadChatModel(key: string): Promise<BaseLLM<any>> {
     const modelList = await this.getModelList();
 

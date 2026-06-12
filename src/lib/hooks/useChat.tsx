@@ -105,6 +105,12 @@ const checkConfig = async (
 
     const data = await res.json();
     const providers: MinimalProvider[] = data.providers;
+    const defaults: {
+      chatProviderId: string | null;
+      chatModelKey: string | null;
+      embeddingProviderId: string | null;
+      embeddingModelKey: string | null;
+    } = data.defaults ?? {};
 
     if (providers.length === 0) {
       throw new Error(
@@ -112,8 +118,14 @@ const checkConfig = async (
       );
     }
 
+    // User's own selection (localStorage) always wins. Fall back to
+    // instance defaults if available, then to the first viable provider.
     const chatModelProvider =
       providers.find((p) => p.id === chatModelProviderId) ??
+      (defaults.chatProviderId
+        ? providers.find((p) => p.id === defaults.chatProviderId &&
+            p.chatModels.some((m) => m.key === defaults.chatModelKey))
+        : undefined) ??
       providers.find((p) => p.chatModels.length > 0);
 
     if (!chatModelProvider) {
@@ -126,11 +138,18 @@ const checkConfig = async (
 
     const chatModel =
       chatModelProvider.chatModels.find((m) => m.key === chatModelKey) ??
+      (defaults.chatProviderId === chatModelProvider.id && defaults.chatModelKey
+        ? chatModelProvider.chatModels.find((m) => m.key === defaults.chatModelKey)
+        : undefined) ??
       chatModelProvider.chatModels[0];
     chatModelKey = chatModel.key;
 
     const embeddingModelProvider =
       providers.find((p) => p.id === embeddingModelProviderId) ??
+      (defaults.embeddingProviderId
+        ? providers.find((p) => p.id === defaults.embeddingProviderId &&
+            p.embeddingModels.some((m) => m.key === defaults.embeddingModelKey))
+        : undefined) ??
       providers.find((p) => p.embeddingModels.length > 0);
 
     if (!embeddingModelProvider) {
@@ -144,7 +163,11 @@ const checkConfig = async (
     const embeddingModel =
       embeddingModelProvider.embeddingModels.find(
         (m) => m.key === embeddingModelKey,
-      ) ?? embeddingModelProvider.embeddingModels[0];
+      ) ??
+      (defaults.embeddingProviderId === embeddingModelProvider.id && defaults.embeddingModelKey
+        ? embeddingModelProvider.embeddingModels.find((m) => m.key === defaults.embeddingModelKey)
+        : undefined) ??
+      embeddingModelProvider.embeddingModels[0];
     embeddingModelKey = embeddingModel.key;
 
     localStorage.setItem('chatModelKey', chatModelKey);

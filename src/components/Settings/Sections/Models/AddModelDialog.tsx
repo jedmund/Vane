@@ -1,23 +1,67 @@
 import { Dialog, DialogPanel } from '@headlessui/react';
 import { Loader2, Plus } from 'lucide-react';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { AnimatePresence, motion } from 'framer-motion';
 import { ConfigModelProvider } from '@/lib/config/types';
+import { Model } from '@/lib/models/types';
 import { toast } from 'sonner';
+import Select from '@/components/ui/Select';
+
+function deriveDisplayName(key: string): string {
+  return key
+    .split(/[-/]/)
+    .map((w) => w.charAt(0).toUpperCase() + w.slice(1))
+    .join(' ');
+}
 
 const AddModel = ({
   providerId,
   setProviders,
   type,
+  currentModels,
 }: {
   providerId: string;
   setProviders: React.Dispatch<React.SetStateAction<ConfigModelProvider[]>>;
   type: 'chat' | 'embedding';
+  currentModels: Model[];
 }) => {
   const [open, setOpen] = useState(false);
   const [modelName, setModelName] = useState('');
   const [modelKey, setModelKey] = useState('');
   const [loading, setLoading] = useState(false);
+  const [availableModels, setAvailableModels] = useState<Model[] | null>(null);
+
+  useEffect(() => {
+    if (!open) {
+      setModelName('');
+      setModelKey('');
+      setAvailableModels(null);
+      return;
+    }
+    fetch(`/api/providers/${providerId}/available-models`)
+      .then((res) => (res.ok ? res.json() : { models: { chat: [], embedding: [] } }))
+      .then((data) => {
+        const list: Model[] = data?.models?.[type] ?? [];
+        const existingKeys = new Set(currentModels.map((m) => m.key));
+        const unadded = list.filter((m) => !existingKeys.has(m.key));
+        setAvailableModels(unadded.length > 0 ? unadded : []);
+      })
+      .catch(() => setAvailableModels([]));
+  }, [open, providerId, type]);
+
+  const hasRemote = availableModels !== null && availableModels.length > 0;
+
+  const handleModelKeyChange = (value: string) => {
+    setModelKey(value);
+    // Auto-derive a display name from the key when selecting from the
+    // dropdown so the user has a sensible starting point they can tweak.
+    const selected = availableModels?.find((m) => m.key === value);
+    if (selected) {
+      setModelName(
+          selected.name || deriveDisplayName(selected.key),
+      );
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -108,6 +152,26 @@ const AddModel = ({
                     className="flex flex-col h-full"
                   >
                     <div className="flex flex-col space-y-4 flex-1">
+                      {hasRemote && (
+                        <div className="flex flex-col items-start space-y-2">
+                          <label className="text-xs text-black/70 dark:text-white/70">
+                            Select model{availableModels.length > 1 ? ' (or type below)' : ''}
+                          </label>
+                          <Select
+                            value={modelKey}
+                            onChange={(e) => handleModelKeyChange(e.target.value)}
+                            options={[
+                              { value: '', label: '—' },
+                              ...availableModels.map((m) => ({
+                                value: m.key,
+                                label: m.name || deriveDisplayName(m.key),
+                              })),
+                            ]}
+                            className="!text-xs lg:!text-[13px]"
+                          />
+                        </div>
+                      )}
+
                       <div className="flex flex-col items-start space-y-2">
                         <label className="text-xs text-black/70 dark:text-white/70">
                           Model name*

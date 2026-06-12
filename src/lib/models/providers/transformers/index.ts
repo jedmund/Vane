@@ -32,15 +32,6 @@ class TransformersProvider extends BaseModelProvider<TransformersConfig> {
     };
   }
 
-  async getModelList(): Promise<ModelList> {
-    const defaultModels = await this.getDefaultModels();
-
-    return {
-      embedding: [...defaultModels.embedding, ...this.embeddingModels],
-      chat: [],
-    };
-  }
-
   async loadChatModel(key: string): Promise<BaseLLM<any>> {
     throw new Error('Transformers Provider does not support chat models.');
   }

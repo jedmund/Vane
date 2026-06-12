@@ -15,8 +15,29 @@ abstract class BaseModelProvider<CONFIG> {
     protected chatModels: Model[] = [],
     protected embeddingModels: Model[] = [],
   ) {}
+
+  async getModelList(): Promise<ModelList> {
+    const defaults = await this.getDefaultModels();
+
+    // Merge defaults with stored models, dedup by key. Stored models take
+    // priority — they represent the operator's explicit curation (added or
+    // renamed via the UI). A model appearing in both lists only appears
+    // once with the stored name.
+    const seenChat = new Set(this.chatModels.map((m) => m.key));
+    const seenEmbedding = new Set(this.embeddingModels.map((m) => m.key));
+
+    return {
+      chat: [
+        ...this.chatModels,
+        ...defaults.chat.filter((m) => !seenChat.has(m.key)),
+      ],
+      embedding: [
+        ...this.embeddingModels,
+        ...defaults.embedding.filter((m) => !seenEmbedding.has(m.key)),
+      ],
+    };
+  }
   abstract getDefaultModels(): Promise<ModelList>;
-  abstract getModelList(): Promise<ModelList>;
   abstract loadChatModel(modelName: string): Promise<BaseLLM<any>>;
   abstract loadEmbeddingModel(modelName: string): Promise<BaseEmbedding<any>>;
   static getProviderConfigFields(): UIConfigField[] {
